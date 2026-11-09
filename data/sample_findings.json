@@ -1,0 +1,84 @@
+[
+  {
+    "id": "F1",
+    "title": "SQL injection in login handler",
+    "cwe": "CWE-89",
+    "component": "api/auth/login.py:42",
+    "cvss_vector": "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+    "description": "User-supplied username is concatenated into a SQL query string.",
+    "evidence": [
+      "taint: request.form['username'] -> cursor.execute(f-string)",
+      "no parameterized query on this path",
+      "reachable from unauthenticated /login endpoint"
+    ],
+    "hints": {"true_positive_prob": 0.95, "evidence_strength": 0.9, "exploit_stages_pass": 8}
+  },
+  {
+    "id": "F2",
+    "title": "Unsanitized SQL in authentication endpoint",
+    "cwe": "CWE-89",
+    "component": "api/auth/login.py:42",
+    "cvss_vector": "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+    "description": "The /login username parameter flows unsanitized into a raw SQL query.",
+    "evidence": ["same username->query sink as reported elsewhere"],
+    "hints": {"true_positive_prob": 0.9, "evidence_strength": 0.85, "exploit_stages_pass": 8, "duplicate_of": "F1"}
+  },
+  {
+    "id": "F3",
+    "title": "Possible hardcoded secret in config loader",
+    "cwe": "CWE-798",
+    "component": "config/loader.py:10",
+    "cvss_vector": "AV:L/AC:L/PR:L/UI:N/S:U/C:L/I:N/A:N",
+    "description": "Pattern-matched a string that looks like a key, but it is a documented public test fixture.",
+    "evidence": ["string matches secret regex", "value is the vendor's published sandbox test key"],
+    "hints": {"true_positive_prob": 0.12, "evidence_strength": 0.3, "exploit_stages_pass": 1}
+  },
+  {
+    "id": "F4",
+    "title": "Reflected XSS in search results",
+    "cwe": "CWE-79",
+    "component": "web/search.py:88",
+    "cvss_vector": "AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N",
+    "description": "Search term may be echoed into HTML, but output encoding on this path is unconfirmed.",
+    "evidence": ["query param reflected in response body", "template auto-escaping status not established"],
+    "hints": {"true_positive_prob": 0.7, "evidence_strength": 0.35, "exploit_stages_pass": 5}
+  },
+  {
+    "id": "F5",
+    "title": "IDOR on invoice retrieval",
+    "cwe": "CWE-639",
+    "component": "api/billing/invoices.py:57",
+    "cvss_vector": "AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N",
+    "description": "invoice_id from the request is used to fetch records without an ownership check.",
+    "evidence": [
+      "no ownership/tenant check before fetch",
+      "sequential integer ids observed",
+      "authenticated low-priv user can enumerate"
+    ],
+    "hints": {"true_positive_prob": 0.9, "evidence_strength": 0.85, "exploit_stages_pass": 8}
+  },
+  {
+    "id": "F6",
+    "title": "Potential buffer over-read in log parser",
+    "cwe": "CWE-125",
+    "component": "native/logparse.c:210",
+    "cvss_vector": "AV:L/AC:H/PR:L/UI:N/S:U/C:L/I:N/A:L",
+    "description": "A length field is trusted, but reaching the vulnerable branch requires constraints that appear infeasible on validated input.",
+    "evidence": ["length read before bounds check", "upstream validator rejects the triggering shape"],
+    "hints": {"true_positive_prob": 0.8, "evidence_strength": 0.75, "exploit_stages_pass": 2}
+  },
+  {
+    "id": "F7",
+    "title": "SSRF in webhook URL fetch",
+    "cwe": "CWE-918",
+    "component": "integrations/webhooks.py:134",
+    "cvss_vector": "AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:L/A:N",
+    "description": "A user-provided webhook URL is fetched server-side with no allowlist.",
+    "evidence": [
+      "no host allowlist or scheme restriction",
+      "internal metadata endpoint reachable from server",
+      "unauthenticated webhook registration"
+    ],
+    "hints": {"true_positive_prob": 0.92, "evidence_strength": 0.88, "exploit_stages_pass": 8}
+  }
+]
