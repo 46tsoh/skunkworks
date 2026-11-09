@@ -61,6 +61,33 @@ locally-run Qwen for latency, and TypeSafe has published no base model or
 parameter count — so treat vendor speed/cost claims as unverified and design so
 we are **not locked to Jev** (see §5).
 
+### Jev alternatives — and why an open-weight one matters here
+Since Jev launched (15 Sep 2026) the "System One" category filled with rivals
+(OpenAI Decisions API, Microsoft Decision 1, Cloudflare Clef, AWS Strands
+Decider, and open reproductions). The most relevant for *this* use case is
+**basal-omni** by Remigiusz Kinas ("Remek"): an **open-weight**, self-hostable
+decision model built on **Gemma 4** (`mini` ~7.9B / `max` ~12B / `ultra`), top
+of the open-weight JevBench board, served behind a `/v1/systemone` endpoint
+(`choice`/`score` modes). Two properties make it arguably a *better default*
+than hosted Jev for security tooling:
+
+1. **No data egress.** Strix/RAPTOR analyze sensitive, often proprietary or
+   vulnerable code and traffic. A hosted decision API means shipping that
+   material to a third party on every routing/triage call. basal-omni runs
+   inside your own container, so nothing leaves. For this domain that is close
+   to a hard requirement.
+2. **Multimodal.** The `omni` variants accept images zero-shot (Gemma 4
+   encoders). This removes Jev's text-only limitation (§5): Strix's browser
+   screenshots and RAPTOR's rendered artifacts can feed a decision directly
+   instead of being flattened to text first.
+
+This is exactly why the reference layer depends on a `DecisionBackend` protocol
+rather than on any vendor: `BasalOmniBackend`
+(`reference/jev/decision_client.py`) is a **drop-in** — pointing a
+`DecisionClient` at a local basal-omni server is a one-line wiring change, with
+no edits to the router, shims, or tests. **Recommended default for sensitive
+targets: basal-omni primary, LLM-judge fallback.**
+
 > Note: the exact request/response JSON field names could not be pulled from the
 > vendor write-ups in this environment (network policy blocked the blog hosts;
 > only `raw.githubusercontent.com` and search summaries resolved). The reference
@@ -195,13 +222,15 @@ Design principles:
   conservative (bias toward *keeping* findings), and keep the decision log so
   every dropped finding is auditable/replayable.
 - **Data sent to a third party.** Routing decisions may include snippets of the
-  target's code or responses. Sending those to TypeSafe is a data-egress
-  decision each operator must make deliberately. Mitigation: `LLMJudgeBackend`
-  /`StaticBackend` keep everything in-house; the client never sends anything a
-  backend doesn't explicitly build; document this clearly.
-- **Text-only input.** Jev takes text; binary/crash artifacts must be
+  target's code or responses. Sending those to hosted Jev is a data-egress
+  decision each operator must make deliberately. Mitigation: prefer the
+  **open-weight `BasalOmniBackend`** (self-hosted, nothing leaves the
+  container); `LLMJudgeBackend`/`StaticBackend` also keep everything in-house;
+  the client never sends anything a backend doesn't explicitly build.
+- **Text-only input.** Hosted Jev takes text; binary/crash artifacts must be
   summarized to text first (which RAPTOR already does for its LLM calls — reuse
-  that).
+  that). Mitigation: `BasalOmniBackend` (and its `omni` image support) lets
+  Strix screenshots / rendered artifacts be passed directly where useful.
 
 ---
 
@@ -230,3 +259,10 @@ Design principles:
   [aibuilderclub: Jev engineering guide](https://www.aibuilderclub.com/blog/jev-engineering-guide)
   (vendor/aggregator sources; verify API specifics against TypeSafe's own docs —
   these hosts were blocked by this environment's network policy).
+- basal-omni (open-weight alternative) — Remigiusz Kinas / "Remek":
+  [basal-omni-1.0-max](https://featherless.ai/models/Remek/basal-omni-1.0-max),
+  [basal-1.0-1.5B model card](https://huggingface.co/Remek/basal-1.0-1.5B);
+  System One category overview —
+  [awesome-system-one](https://github.com/andyrewlee/awesome-system-one).
+  Verify `/v1/systemone` request/response fields against the model card before
+  relying on `BasalOmniBackend`.

@@ -18,7 +18,7 @@ tunable, and **unit-testable**.
 
 | File | Purpose |
 |---|---|
-| `decision_client.py` | Provider-agnostic client. Backends: `JevBackend` (TypeSafe API), `LLMJudgeBackend` (wraps any completion callable), `StaticBackend` (offline/tests). `DecisionClient` adds primary→fallback degradation. |
+| `decision_client.py` | Provider-agnostic client. Backends: `JevBackend` (hosted TypeSafe API), `BasalOmniBackend` (open-weight, **self-hosted**, multimodal — recommended default for sensitive targets), `LLMJudgeBackend` (wraps any completion callable), `StaticBackend` (offline/tests). `DecisionClient` adds primary→fallback degradation. |
 | `router.py` | `DecisionRouter`: per-kind thresholds, caching, structured JSONL decision log, metrics, and a `record_outcome` calibration hook. |
 | `integrations/strix_decisions.py` | Strix routing + findings-triage helpers. |
 | `integrations/raptor_gates.py` | RAPTOR eight-stage `/validate` gate chain + hypothesis scoring. |

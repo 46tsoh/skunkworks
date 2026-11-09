@@ -4,6 +4,7 @@ See ``docs/jev-security-agent-integration.md`` for the design rationale.
 """
 
 from .decision_client import (
+    BasalOmniBackend,
     BooleanResult,
     ChoiceResult,
     DecisionBackend,
@@ -17,6 +18,7 @@ from .decision_client import (
 from .router import DecisionRouter, RouterMetrics
 
 __all__ = [
+    "BasalOmniBackend",
     "BooleanResult",
     "ChoiceResult",
     "DecisionBackend",

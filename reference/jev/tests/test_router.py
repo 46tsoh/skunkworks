@@ -14,6 +14,8 @@ import unittest
 from pathlib import Path
 
 from reference.jev.decision_client import (
+    BasalOmniBackend,
+    DecisionBackend,
     DecisionClient,
     DecisionError,
     JevBackend,
@@ -66,6 +68,22 @@ class TestDecisionClient(unittest.TestCase):
         self.assertFalse(backend.configured)
         with self.assertRaises(DecisionError):
             backend.boolean("x")
+
+    def test_basal_backend_satisfies_protocol_and_is_swap_in(self):
+        # The open-weight basal-omni backend must be a drop-in for the protocol,
+        # so pointing a client at a local self-hosted model needs no other code
+        # change. (No network here: just structural checks.)
+        backend = BasalOmniBackend(api_base="http://localhost:9/v1")
+        self.assertIsInstance(backend, DecisionBackend)
+        self.assertEqual(backend.name, "basal-omni")
+        # Unreachable server -> DecisionError, which a fallback would catch.
+        client = DecisionClient(
+            primary=backend,
+            fallback=StaticBackend(boolean_fn=lambda s: 0.7),
+        )
+        result = client.boolean("statement")
+        self.assertEqual(result.backend, "static")
+        self.assertAlmostEqual(result.probability, 0.7)
 
 
 class TestRouterGate(unittest.TestCase):

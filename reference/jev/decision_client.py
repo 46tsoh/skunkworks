@@ -213,6 +213,111 @@ class JevBackend:
 
 
 # --------------------------------------------------------------------------- #
+# BasalOmniBackend — open-weight, self-hosted, multimodal (Gemma 4)
+# --------------------------------------------------------------------------- #
+# basal-omni (Remigiusz Kinas / "Remek", open weights on Hugging Face) is a
+# System One decision model served behind a `/v1/systemone` endpoint with
+# `choice` / `score` modes. Because it is self-hostable it keeps target code and
+# responses *inside your own infrastructure* — the right default when the thing
+# being analyzed is sensitive/proprietary (i.e. most security work). The `omni`
+# variants also accept images, so Strix browser screenshots or rendered
+# artifacts can be passed through `image_refs` without flattening to text first.
+#
+# Endpoint/field names are isolated here (verify against the model card); the
+# default base points at a local inference server.
+_BASAL_DEFAULT_BASE = "http://localhost:8000/v1"
+_BASAL_SYSTEMONE_PATH = "/systemone"
+_BASAL_MODE_CHOICE = "choice"
+_BASAL_MODE_SCORE = "score"
+
+
+class BasalOmniBackend:
+    """Self-hosted basal-omni backend (Jev-compatible, multimodal, no egress).
+
+    Config (env-first, mirrors the Jev/Strix/RAPTOR pattern):
+
+    * ``BASAL_API_BASE`` — endpoint base (default ``http://localhost:8000/v1``)
+    * ``BASAL_API_KEY``  — optional bearer (local servers often need none)
+    * ``BASAL_MODEL``    — e.g. ``basal-omni-1.0-ultra``
+
+    ``boolean`` is implemented via the model's ``score`` mode over a 0..1 scale,
+    i.e. a direct probability estimate — same semantics as Jev's boolean.
+    """
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        api_base: Optional[str] = None,
+        model: Optional[str] = None,
+        timeout_s: float = 5.0,
+    ) -> None:
+        self.name = "basal-omni"
+        self.api_key = api_key or os.environ.get("BASAL_API_KEY")
+        self.api_base = (api_base or os.environ.get("BASAL_API_BASE")
+                         or _BASAL_DEFAULT_BASE).rstrip("/")
+        self.model = model or os.environ.get("BASAL_MODEL", "basal-omni-1.0-ultra")
+        self.timeout_s = timeout_s
+
+    def _post(self, payload: dict) -> tuple[dict, float]:
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        body = json.dumps({"model": self.model, **payload}).encode("utf-8")
+        req = urllib.request.Request(
+            self.api_base + _BASAL_SYSTEMONE_PATH,
+            data=body,
+            method="POST",
+            headers=headers,
+        )
+        start = time.perf_counter()
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+            raise DecisionError(f"basal-omni request failed: {exc}") from exc
+        return data, (time.perf_counter() - start) * 1000.0
+
+    def choose(
+        self,
+        prompt: str,
+        options: Sequence[str],
+        image_refs: Optional[Sequence[str]] = None,
+    ) -> ChoiceResult:
+        opts = list(options)
+        if not opts:
+            raise DecisionError("choose() requires at least one option")
+        payload = {"mode": _BASAL_MODE_CHOICE, "state": prompt, "options": opts}
+        if image_refs:
+            payload["images"] = list(image_refs)  # multimodal: zero-shot images
+        data, ms = self._post(payload)
+        idx = int(data.get(_RESP_CHOICE_INDEX, 0))
+        idx = max(0, min(idx, len(opts) - 1))
+        return ChoiceResult(idx, opts[idx],
+                            float(data.get(_RESP_PROBABILITY, 0.0)),
+                            self.name, ms, data)
+
+    def score(
+        self, prompt: str, scale_min: float, scale_max: float
+    ) -> ScoreResult:
+        data, ms = self._post(
+            {"mode": _BASAL_MODE_SCORE, "state": prompt,
+             "scale_min": scale_min, "scale_max": scale_max}
+        )
+        value = float(data.get(_RESP_SCORE_VALUE, scale_min))
+        value = max(scale_min, min(value, scale_max))
+        return ScoreResult(value, scale_min, scale_max, self.name, ms, data)
+
+    def boolean(self, statement: str) -> BooleanResult:
+        # Probability estimate via score mode on a 0..1 scale.
+        data, ms = self._post(
+            {"mode": _BASAL_MODE_SCORE, "state": statement,
+             "scale_min": 0.0, "scale_max": 1.0}
+        )
+        prob = float(data.get(_RESP_SCORE_VALUE, data.get(_RESP_PROBABILITY, 0.0)))
+        return BooleanResult(max(0.0, min(prob, 1.0)), self.name, ms, data)
+
+
+# --------------------------------------------------------------------------- #
 # LLMJudgeBackend — reuse whatever LLM the framework already has
 # --------------------------------------------------------------------------- #
 class LLMJudgeBackend:
