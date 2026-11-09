@@ -1,0 +1,361 @@
+"""Provider-agnostic decision client for security-agent frameworks.
+
+This module is the *only* place that knows about a concrete decision provider
+(TypeSafe's Jev API). Everything else in the codebase depends on the
+``DecisionBackend`` protocol, so swapping Jev for an LLM-as-judge, a local
+model, or a static rule set is a one-line change at wiring time.
+
+Design goals
+------------
+* **No hard dependency on any vendor.** ``JevBackend`` is one backend among
+  several. The library runs fully offline with ``StaticBackend``.
+* **Typed decisions.** Three primitives only — ``choose`` / ``score`` /
+  ``boolean`` — each returning a result with an explicit probability, so
+  callers never parse free-form model prose.
+* **Graceful degradation.** ``DecisionClient`` wraps a primary backend and an
+  optional fallback; if the primary is unconfigured, times out, or errors, the
+  fallback answers instead of crashing the agent loop.
+
+Only the Python standard library is used, so this file is importable and
+testable without installing anything or reaching the network.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import time
+import urllib.error
+import urllib.request
+from dataclasses import dataclass, field
+from typing import Callable, Optional, Protocol, Sequence, runtime_checkable
+
+
+# --------------------------------------------------------------------------- #
+# Result types
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class ChoiceResult:
+    """Result of a choose-one decision."""
+
+    index: int
+    option: str
+    probability: float
+    backend: str
+    latency_ms: float = 0.0
+    raw: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ScoreResult:
+    """Result of a score-on-a-scale decision."""
+
+    value: float
+    scale_min: float
+    scale_max: float
+    backend: str
+    latency_ms: float = 0.0
+    raw: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class BooleanResult:
+    """Result of a yes/no decision.
+
+    ``probability`` is P(statement is true). ``decide(threshold)`` turns it into
+    a hard boolean, which is what makes gated agent logic unit-testable.
+    """
+
+    probability: float
+    backend: str
+    latency_ms: float = 0.0
+    raw: dict = field(default_factory=dict)
+
+    def decide(self, threshold: float = 0.5) -> bool:
+        return self.probability >= threshold
+
+
+# --------------------------------------------------------------------------- #
+# Backend protocol
+# --------------------------------------------------------------------------- #
+@runtime_checkable
+class DecisionBackend(Protocol):
+    """A source of typed decisions. Implement these three methods."""
+
+    name: str
+
+    def choose(self, prompt: str, options: Sequence[str]) -> ChoiceResult: ...
+
+    def score(
+        self, prompt: str, scale_min: float, scale_max: float
+    ) -> ScoreResult: ...
+
+    def boolean(self, statement: str) -> BooleanResult: ...
+
+
+class DecisionError(RuntimeError):
+    """Raised by a backend when it cannot produce a decision."""
+
+
+# --------------------------------------------------------------------------- #
+# JevBackend — the one place that knows TypeSafe's wire format
+# --------------------------------------------------------------------------- #
+# The exact request/response JSON field names for the Jev API could not be
+# verified from vendor docs in this environment. They are isolated here as
+# constants so pinning them to the real API is a single-file edit. Update these
+# (and the two small builder/parser helpers) once the real schema is confirmed.
+_JEV_DEFAULT_BASE = "https://api.typesafe.ai/v1"
+_JEV_CHOOSE_PATH = "/decisions/choose"
+_JEV_SCORE_PATH = "/decisions/score"
+_JEV_BOOLEAN_PATH = "/decisions/boolean"
+
+# Response field names (adjust to match the real API).
+_RESP_CHOICE_INDEX = "choice_index"
+_RESP_PROBABILITY = "probability"
+_RESP_SCORE_VALUE = "value"
+
+
+class JevBackend:
+    """Calls TypeSafe's Jev decision API over HTTPS using only stdlib.
+
+    Configuration is environment-first so it slots into Strix
+    (``~/.strix/cli-config.json`` style env) and RAPTOR (dispatcher env) without
+    new plumbing:
+
+    * ``JEV_API_BASE``  — endpoint base (default ``https://api.typesafe.ai/v1``)
+    * ``JEV_API_KEY``   — bearer credential (required to actually call)
+    * ``JEV_MODEL``     — model id, e.g. ``jev-1.13.0``
+    """
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        api_base: Optional[str] = None,
+        model: Optional[str] = None,
+        timeout_s: float = 5.0,
+    ) -> None:
+        self.name = "jev"
+        self.api_key = api_key or os.environ.get("JEV_API_KEY")
+        self.api_base = (api_base or os.environ.get("JEV_API_BASE")
+                         or _JEV_DEFAULT_BASE).rstrip("/")
+        self.model = model or os.environ.get("JEV_MODEL", "jev-1.13.0")
+        self.timeout_s = timeout_s
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.api_key)
+
+    def _post(self, path: str, payload: dict) -> tuple[dict, float]:
+        if not self.configured:
+            raise DecisionError("JEV_API_KEY is not set")
+        body = json.dumps({"model": self.model, **payload}).encode("utf-8")
+        req = urllib.request.Request(
+            self.api_base + path,
+            data=body,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+        start = time.perf_counter()
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+            raise DecisionError(f"jev request failed: {exc}") from exc
+        return data, (time.perf_counter() - start) * 1000.0
+
+    def choose(self, prompt: str, options: Sequence[str]) -> ChoiceResult:
+        opts = list(options)
+        if not opts:
+            raise DecisionError("choose() requires at least one option")
+        data, ms = self._post(
+            _JEV_CHOOSE_PATH, {"prompt": prompt, "options": opts}
+        )
+        idx = int(data.get(_RESP_CHOICE_INDEX, 0))
+        idx = max(0, min(idx, len(opts) - 1))
+        return ChoiceResult(
+            index=idx,
+            option=opts[idx],
+            probability=float(data.get(_RESP_PROBABILITY, 0.0)),
+            backend=self.name,
+            latency_ms=ms,
+            raw=data,
+        )
+
+    def score(
+        self, prompt: str, scale_min: float, scale_max: float
+    ) -> ScoreResult:
+        data, ms = self._post(
+            _JEV_SCORE_PATH,
+            {"prompt": prompt, "scale_min": scale_min, "scale_max": scale_max},
+        )
+        value = float(data.get(_RESP_SCORE_VALUE, scale_min))
+        value = max(scale_min, min(value, scale_max))
+        return ScoreResult(
+            value=value,
+            scale_min=scale_min,
+            scale_max=scale_max,
+            backend=self.name,
+            latency_ms=ms,
+            raw=data,
+        )
+
+    def boolean(self, statement: str) -> BooleanResult:
+        data, ms = self._post(_JEV_BOOLEAN_PATH, {"statement": statement})
+        return BooleanResult(
+            probability=float(data.get(_RESP_PROBABILITY, 0.0)),
+            backend=self.name,
+            latency_ms=ms,
+            raw=data,
+        )
+
+
+# --------------------------------------------------------------------------- #
+# LLMJudgeBackend — reuse whatever LLM the framework already has
+# --------------------------------------------------------------------------- #
+class LLMJudgeBackend:
+    """Fallback that turns *any* text-completion callable into a decision maker.
+
+    Pass a callable ``complete(prompt: str) -> str``. In Strix that wraps
+    LiteLLM; in RAPTOR it wraps a call back through the dispatcher. The callable
+    must return a short JSON object; this class owns the (strict) parsing so the
+    rest of the system still sees typed results.
+    """
+
+    def __init__(self, complete: Callable[[str], str], name: str = "llm-judge"):
+        self.name = name
+        self._complete = complete
+
+    def _ask_json(self, prompt: str) -> tuple[dict, float]:
+        start = time.perf_counter()
+        text = self._complete(prompt)
+        ms = (time.perf_counter() - start) * 1000.0
+        try:
+            # Be tolerant of models that wrap JSON in prose/code fences.
+            lo, hi = text.find("{"), text.rfind("}")
+            if lo == -1 or hi == -1:
+                raise ValueError("no JSON object in completion")
+            return json.loads(text[lo : hi + 1]), ms
+        except ValueError as exc:
+            raise DecisionError(f"llm-judge returned non-JSON: {exc}") from exc
+
+    def choose(self, prompt: str, options: Sequence[str]) -> ChoiceResult:
+        opts = list(options)
+        numbered = "\n".join(f"{i}: {o}" for i, o in enumerate(opts))
+        data, ms = self._ask_json(
+            f"{prompt}\n\nOptions:\n{numbered}\n\n"
+            'Reply ONLY as JSON: {"index": <int>, "probability": <0..1>}'
+        )
+        idx = max(0, min(int(data.get("index", 0)), len(opts) - 1))
+        return ChoiceResult(idx, opts[idx], float(data.get("probability", 0.0)),
+                            self.name, ms, data)
+
+    def score(
+        self, prompt: str, scale_min: float, scale_max: float
+    ) -> ScoreResult:
+        data, ms = self._ask_json(
+            f"{prompt}\n\nScore on a scale from {scale_min} to {scale_max}. "
+            'Reply ONLY as JSON: {"value": <number>}'
+        )
+        value = max(scale_min, min(float(data.get("value", scale_min)), scale_max))
+        return ScoreResult(value, scale_min, scale_max, self.name, ms, data)
+
+    def boolean(self, statement: str) -> BooleanResult:
+        data, ms = self._ask_json(
+            f"Statement: {statement}\n\n"
+            'Estimate the probability it is true. '
+            'Reply ONLY as JSON: {"probability": <0..1>}'
+        )
+        return BooleanResult(float(data.get("probability", 0.0)), self.name, ms,
+                             data)
+
+
+# --------------------------------------------------------------------------- #
+# StaticBackend — deterministic, offline (tests and --no-llm mode)
+# --------------------------------------------------------------------------- #
+class StaticBackend:
+    """Deterministic backend for tests and RAPTOR's ``--no-llm`` mode.
+
+    Takes plain rule callables so a run is fully reproducible with no network
+    and no model. Defaults are intentionally conservative (boolean defaults to
+    0.5 so a 0.5 threshold *keeps* the finding).
+    """
+
+    def __init__(
+        self,
+        choose_fn: Optional[Callable[[str, Sequence[str]], int]] = None,
+        score_fn: Optional[Callable[[str, float, float], float]] = None,
+        boolean_fn: Optional[Callable[[str], float]] = None,
+        name: str = "static",
+    ) -> None:
+        self.name = name
+        self._choose = choose_fn or (lambda prompt, opts: 0)
+        self._score = score_fn or (lambda prompt, lo, hi: (lo + hi) / 2.0)
+        self._boolean = boolean_fn or (lambda statement: 0.5)
+
+    def choose(self, prompt: str, options: Sequence[str]) -> ChoiceResult:
+        opts = list(options)
+        idx = max(0, min(int(self._choose(prompt, opts)), len(opts) - 1))
+        return ChoiceResult(idx, opts[idx], 1.0, self.name, 0.0, {})
+
+    def score(
+        self, prompt: str, scale_min: float, scale_max: float
+    ) -> ScoreResult:
+        value = max(scale_min, min(self._score(prompt, scale_min, scale_max),
+                                   scale_max))
+        return ScoreResult(value, scale_min, scale_max, self.name, 0.0, {})
+
+    def boolean(self, statement: str) -> BooleanResult:
+        return BooleanResult(float(self._boolean(statement)), self.name, 0.0, {})
+
+
+# --------------------------------------------------------------------------- #
+# DecisionClient — primary + fallback with graceful degradation
+# --------------------------------------------------------------------------- #
+class DecisionClient:
+    """Wraps a primary backend and an optional fallback.
+
+    If the primary raises :class:`DecisionError` (unconfigured, timeout, bad
+    response), the fallback answers. This guarantees an agent loop never hard
+    fails because a decision provider is unavailable.
+    """
+
+    def __init__(
+        self,
+        primary: DecisionBackend,
+        fallback: Optional[DecisionBackend] = None,
+    ) -> None:
+        self.primary = primary
+        self.fallback = fallback
+
+    def _run(self, method: str, *args):
+        try:
+            return getattr(self.primary, method)(*args)
+        except DecisionError:
+            if self.fallback is None:
+                raise
+            return getattr(self.fallback, method)(*args)
+
+    def choose(self, prompt: str, options: Sequence[str]) -> ChoiceResult:
+        return self._run("choose", prompt, options)
+
+    def score(
+        self, prompt: str, scale_min: float, scale_max: float
+    ) -> ScoreResult:
+        return self._run("score", prompt, scale_min, scale_max)
+
+    def boolean(self, statement: str) -> BooleanResult:
+        return self._run("boolean", statement)
+
+    @classmethod
+    def from_env(
+        cls, fallback: Optional[DecisionBackend] = None
+    ) -> "DecisionClient":
+        """Build a Jev-primary client from env, with an optional fallback.
+
+        If ``JEV_API_KEY`` is unset the Jev backend simply degrades to the
+        fallback on first use, so this is safe to call unconditionally.
+        """
+        return cls(primary=JevBackend(), fallback=fallback)
