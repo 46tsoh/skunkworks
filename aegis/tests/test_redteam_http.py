@@ -9,6 +9,31 @@ from aegis.redteam.http import (
 from aegis.redteam.scope import EngagementScope
 
 
+def test_sanitize_text_escapes_control_chars():
+    from aegis.redteam.http import sanitize_text
+    # ESC, newline, carriage return, NUL — none may pass through raw
+    assert sanitize_text("ok\x1b[31mred\n\r\x00") == "ok\\x1b[31mred\\x0a\\x0d\\x00"
+    assert sanitize_text("plain") == "plain"
+    long = "a" * 5000
+    assert sanitize_text(long, limit=10).endswith("…") and len(sanitize_text(long, 10)) == 11
+
+
+def test_open_redirect_evidence_is_sanitized():
+    # a hostile Location with an ANSI escape must be neutralized in evidence
+    from aegis.redteam.engine import RedTeamEngine
+    from aegis.redteam.scope import EngagementScope
+
+    def h(url, params):
+        return HttpResponse(url, 302, {"Location": "http://x\x1b[2Jevil/"}, "")
+
+    class FT:
+        def send(self, m, u, p=None): return h(u, p)
+    eng = RedTeamEngine(EngagementScope(hosts=["target.htb"],
+                                        urls=["http://target.htb/"]), transport=FT())
+    r = eng.attempt("redirect", "http://target.htb/go", "next")
+    assert all("\x1b" not in e for e in r.evidence)  # no raw ESC in audit data
+
+
 def test_with_query_replaces_query_deterministically():
     assert _with_query("http://h/p?old=1", {"a": "b"}) == "http://h/p?a=b"
     assert _with_query("http://h/p", None) == "http://h/p"

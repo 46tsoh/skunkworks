@@ -22,7 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
-from aegis.redteam.http import HttpResponse, Transport
+from aegis.redteam.http import HttpResponse, Transport, sanitize_text
 
 # A unique, inert marker so a reflection/redirect is unambiguously *ours*.
 MARKER = "aeg1s7k9z"
@@ -152,14 +152,15 @@ class OpenRedirect(Technique):
         verified = False
         proof = ""
         loc = resp.header("location")
+        safe_loc = sanitize_text(loc, limit=256)  # response data → never raw
         if 300 <= resp.status < 400 and loc:
             if MARKER in loc and ".invalid" in loc:
                 verified = True
                 proof = (f"open redirect confirmed on {param!r}: Location points "
                          f"to the attacker-supplied host")
-                ev.append(f"{resp.status} redirect to Location: {loc}")
+                ev.append(f"{resp.status} redirect to Location: {safe_loc}")
             else:
-                ev.append(f"redirects, but not to our marker (Location: {loc})")
+                ev.append(f"redirects, but not to our marker (Location: {safe_loc})")
         else:
             ev.append(f"no off-site redirect (status {resp.status or resp.error})")
         return VerifyResult(verified, self.name, self.cwe, proof, ev, requests=1)
