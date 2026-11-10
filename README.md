@@ -22,12 +22,34 @@ python -m venv .venv
 
 .venv/bin/aegis analyze                 # single pipeline on the sample corpus
 .venv/bin/aegis run                     # BOTH engines over the sample target (unified report)
-.venv/bin/aegis run --backend llm       # drive decisions with a standard local LLM
-.venv/bin/aegis run --use-tools         # source candidates from the tool registry
+.venv/bin/aegis run --mode full-llm --allow-egress      # one LLM plans AND decides
+.venv/bin/aegis run --mode llm+decision --allow-egress  # LLM plans/writes, decision model (Jev) decides
+.venv/bin/aegis run --use-tools         # agent selects the real tool adapters
 .venv/bin/aegis tools                   # tool adapter inventory + availability
 .venv/bin/aegis calibrate               # tune decision thresholds on a labeled corpus
-.venv/bin/aegis run --out ./run         # also write report.json + decisions.jsonl
-.venv/bin/pytest --cov=aegis            # 226 passing, ~96% coverage
+.venv/bin/aegis dashboard               # run both engines + open the live dashboard
+.venv/bin/pytest --cov=aegis            # 258 passing, ~95% coverage
+```
+
+### Scanning an authorized target
+
+`aegis scan` runs a real scanner live against an external target and drives its
+findings through the full agent loop (reasoning transcript, decisions, spawned
+subagents) — viewable in the dashboard. It is **gated behind `--authorized`** and
+only ever runs the network scanners (recon/web/dast), never local-execution
+tools. Use it on targets you **own, public test ranges, or competition/CTF
+targets you are permitted to test** — never arbitrary third parties.
+
+```bash
+./docker/pull-images.sh                 # pull the scanner images once (local, dockerized)
+
+# nmap the canonical authorized test host, through the agent loop, into the UI:
+aegis scan --target scanme.nmap.org --tool recon --authorized --out ui/public/data
+aegis dashboard                         # read the agent transcript over the real target
+
+# drive it with a model (Claude plans, Jev decides) for richer reasoning:
+aegis scan --target scanme.nmap.org --tool recon --authorized \
+           --mode llm+decision --allow-egress --out ui/public/data
 ```
 
 ## Tools
