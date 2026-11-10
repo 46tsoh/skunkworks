@@ -8,6 +8,7 @@ import Agents from "./views/Agents.jsx";
 import Hypotheses from "./views/Hypotheses.jsx";
 import Decisions from "./views/Decisions.jsx";
 import Tools from "./views/Tools.jsx";
+import RedTeam from "./views/RedTeam.jsx";
 
 const NAV = [
   ["overview", "Overview"],
@@ -16,6 +17,7 @@ const NAV = [
   ["hypotheses", "Hypotheses"],
   ["decisions", "Decisions"],
   ["tools", "Tools"],
+  ["redteam", "Red team"],
 ];
 
 export default function App() {
@@ -104,6 +106,7 @@ export default function App() {
               {tab === "hypotheses" && <Hypotheses model={model} />}
               {tab === "decisions" && <Decisions model={model} />}
               {tab === "tools" && <Tools model={model} />}
+              {tab === "redteam" && <RedTeam />}
             </div>
           )}
         </main>

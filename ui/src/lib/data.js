@@ -52,6 +52,44 @@ export function useAegisData() {
 }
 
 /**
+ * Load a red-team exploit result written by `aegis exploit --out`.
+ *
+ * Prefers a real run at data/redteam.json; if that is absent (the common case
+ * for a fresh dashboard) it falls back to the committed data/redteam.sample.json
+ * so the view is viewable out of the box, and reports which one it loaded via
+ * `source` ("live" | "sample" | null). Both files are the exact `--out` shape:
+ *   { result: <ExploitResult.as_dict()>, events: [...], engagement: "..." }.
+ * Absence of both is not an error — the view shows an empty state instead.
+ */
+export function useRedTeamData() {
+  const [state, setState] = useState({ loading: true, data: null, source: null });
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      for (const [path, source] of [
+        ["data/redteam.json", "live"],
+        ["data/redteam.sample.json", "sample"],
+      ]) {
+        try {
+          const data = JSON.parse(await fetchText(path));
+          if (alive) setState({ loading: false, data, source });
+          return;
+        } catch {
+          /* try the next candidate */
+        }
+      }
+      if (alive) setState({ loading: false, data: null, source: null });
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  return state;
+}
+
+/**
  * Live transcript: poll data/events.jsonl so the agent view fills in real time
  * while a run is writing it (no server beyond the dev server). Returns the full
  * event list; empty until a run streams one.

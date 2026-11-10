@@ -85,6 +85,17 @@ export function IconTools(p) {
   );
 }
 
+export function IconRedTeam(p) {
+  // planted flag — a captured foothold / red-team objective
+  return (
+    <Svg {...p}>
+      <path d="M6 21V4" />
+      <path d="M6 4h11l-2.2 3.2L17 10.5H6" />
+      <circle cx="6" cy="3" r="1" fill="currentColor" stroke="none" />
+    </Svg>
+  );
+}
+
 export function IconShield(p) {
   return (
     <Svg {...p}>
@@ -120,4 +131,5 @@ export const NAV_ICONS = {
   hypotheses: IconHypotheses,
   decisions: IconDecisions,
   tools: IconTools,
+  redteam: IconRedTeam,
 };
