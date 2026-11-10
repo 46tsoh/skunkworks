@@ -41,6 +41,17 @@ def test_scan_refuses_without_authorization(capsys):
     assert "authorized" in err and "network" in err
 
 
+def test_scan_active_flag_refused_for_non_dast_tool(capsys):
+    """--active is a ZAP (dast) concept; refuse it for other scanners before
+    any network call, so the user isn't surprised by a passive scan."""
+    import aegis.cli as cli
+    rc = cli.main(["scan", "--target", "scanme.example", "--tool", "recon",
+                   "--authorized", "--active"])
+    assert rc == 2
+    err = capsys.readouterr().err.lower()
+    assert "--active" in err and "dast" in err
+
+
 def test_scan_runs_agent_loop_and_writes_dashboard(tmp_path, monkeypatch):
     """`aegis scan --out` drives the real findings through the dynamic agent
     loop and writes a dashboard-ready run (report + transcript + events)."""

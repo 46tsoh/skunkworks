@@ -10,6 +10,10 @@ whole pipeline is testable with no binaries and no network.
 
 from __future__ import annotations
 
+import os
+import shutil
+import stat
+import tempfile
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -84,6 +88,51 @@ class ToolResult:
 
 # A parser turns a tool's native output text into Candidate objects.
 Parser = Callable[[str, str], List[Candidate]]
+
+
+# A scanner report far larger than this is treated as an error rather than
+# read into memory (a defense against a planted oversize/endless file).
+_MAX_REPORT_BYTES = 64 * 1024 * 1024
+
+
+def _read_report_file(path: Path) -> str:
+    """Read a tool's report file safely.
+
+    The report lives in a scratch dir the scanning container writes to, so the
+    read is hardened against a planted special file:
+
+    * ``O_NOFOLLOW`` — a symlink at the report path is refused (no redirect to
+      an arbitrary host file).
+    * ``O_NONBLOCK`` — opening a FIFO/device returns immediately instead of
+      hanging forever waiting for a writer (DoS); we then require a regular file
+      via ``fstat`` and bail otherwise.
+    * a size cap — a report over ``_MAX_REPORT_BYTES`` is rejected, not slurped.
+
+    Any absence/irregularity/oversize yields ``""`` (parsed as "no findings").
+    """
+    try:
+        fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return ""  # missing, or a symlink (ELOOP) — refuse either way
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            return ""  # FIFO/device/dir — refuse (open did not block: O_NONBLOCK)
+        if st.st_size > _MAX_REPORT_BYTES:
+            return ""
+        chunks = []
+        remaining = _MAX_REPORT_BYTES
+        while remaining > 0:
+            block = os.read(fd, min(1 << 20, remaining))
+            if not block:
+                break  # EOF
+            chunks.append(block)
+            remaining -= len(block)
+        return b"".join(chunks).decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+    finally:
+        os.close(fd)
 
 
 @runtime_checkable
@@ -185,6 +234,16 @@ class DockerBackedTool:
         # (nuclei templates) override this.
         return []
 
+    def report_mount(self):
+        # Some scanners cannot stream their machine-readable report to stdout
+        # and must write it to a *file* (ZAP writes JSON under /zap/wrk). A tool
+        # that returns ``(container_dir, filename)`` here gets a fresh, empty,
+        # writable host dir mounted at ``container_dir``; ``argv()`` receives the
+        # in-container report path as ``opts["report_path"]``, and ``run()``
+        # parses the file's contents (not stdout) once the container exits.
+        # Default None: the tool's report is on stdout.
+        return None
+
     def run(self, target: str, *, network: str = "none", **opts) -> ToolResult:
         t0 = time.perf_counter()
         if not docker_available():
@@ -219,11 +278,32 @@ class DockerBackedTool:
                 self.name, ToolStatus.ERROR, target=target,
                 errors=[f"target {target!r} not found / not mountable"],
                 duration_ms=(time.perf_counter() - t0) * 1000.0)
+        # A tool that writes its report to a file (not stdout) gets a fresh
+        # writable host dir mounted at its report directory; we read the report
+        # back from there and clean the dir up afterwards.
+        report_spec = self.report_mount()
+        rw_mounts = []
+        report_dir = None
+        report_parent = None
+        if report_spec is not None:
+            container_dir, filename = report_spec
+            # The scanner may run as a non-root UID inside the container (ZAP is
+            # uid 1000) and must be able to write the report, so the mount dir
+            # is group/other-writable. To avoid a world-writable dir on a shared
+            # host, it lives INSIDE a 0700 parent we own: directory traversal
+            # needs execute on every ancestor, so no other local user can reach
+            # the inner dir even at 0777. The Docker daemon (root) still resolves
+            # the bind mount. We also refuse a symlinked report on read-back.
+            report_parent = tempfile.mkdtemp(prefix="aegis-report-")  # 0700, ours
+            report_dir = os.path.join(report_parent, "wrk")
+            os.mkdir(report_dir, 0o777)
+            rw_mounts = [(report_dir, container_dir)]
+            opts = {**opts, "report_path": f"{container_dir}/{filename}"}
         try:
             cr = run_container(self.image, self.argv(target, **opts),
                                mounts=mounts, workdir=self.container_workdir,
                                timeout_s=self.timeout_s, network=network,
-                               volumes=self.volumes())
+                               volumes=self.volumes(), rw_mounts=rw_mounts)
             raw = cr.stdout + (("\n[stderr]\n" + cr.stderr) if cr.stderr else "")
             # Fail-closed: a timeout or an unexpected exit code is an ERROR, and
             # no candidates are surfaced from a failed run.
@@ -239,7 +319,13 @@ class DockerBackedTool:
                             f"{sorted(self.ok_exit_codes)})"],
                     metadata={"image": self.image, "exit": cr.exit_code},
                     duration_ms=(time.perf_counter() - t0) * 1000.0)
-            cands = self._parser(cr.stdout, target)
+            # Parse the report file for file-emitting tools; stdout otherwise.
+            if report_dir is not None:
+                parse_input = _read_report_file(
+                    Path(report_dir) / report_spec[1])
+            else:
+                parse_input = cr.stdout
+            cands = self._parser(parse_input, target)
             for c in cands:
                 c.metadata.setdefault("tool", self.name)
             return ToolResult(self.name, ToolStatus.OK, candidates=cands, raw=raw,
@@ -250,6 +336,9 @@ class DockerBackedTool:
             return ToolResult(self.name, ToolStatus.ERROR, target=target,
                               errors=[f"{type(exc).__name__}: {exc}"],
                               duration_ms=(time.perf_counter() - t0) * 1000.0)
+        finally:
+            if report_parent is not None:
+                shutil.rmtree(report_parent, ignore_errors=True)
 
 
 class ToolRegistry:

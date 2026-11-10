@@ -62,6 +62,7 @@ def run_container(
     cpus: str = "2.0",
     entrypoint: Optional[str] = None,
     volumes: Optional[Sequence[Tuple[str, str]]] = None,  # (named volume, container) ro
+    rw_mounts: Optional[Sequence[Tuple[str, str]]] = None,  # (host, container) read-WRITE
 ) -> ContainerRun:
     """Run ``image`` locally with the given args and return its output.
 
@@ -82,6 +83,11 @@ def run_container(
         # A named Docker volume (not a host path) — e.g. provisioned scanner
         # templates. Read-only like every other mount.
         cmd += ["-v", f"{name}:{container}:ro"]
+    for host, container in (rw_mounts or []):
+        # A writable scratch mount for tools that can only emit their machine
+        # report as a *file* (e.g. ZAP writes JSON to /zap/wrk). The caller owns
+        # a fresh, empty host dir; nothing sensitive is ever mounted this way.
+        cmd += ["-v", f"{Path(host).resolve()}:{container}"]
     cmd += ["-w", workdir, image, *args]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)

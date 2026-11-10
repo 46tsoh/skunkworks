@@ -168,6 +168,11 @@ def _cmd_scan(args: argparse.Namespace) -> int:
               "are permitted to test. Never scan third parties without "
               "authorization.", file=sys.stderr)
         return 2
+    if getattr(args, "active", False) and args.tool != "dast":
+        print(f"--active applies only to the dast (ZAP) tool, not "
+              f"{args.tool!r}; drop it for a passive/recon scan.",
+              file=sys.stderr)
+        return 2
 
     from aegis.tools import default_registry
     from aegis.tools.base import DockerBackedTool
@@ -193,11 +198,14 @@ def _cmd_scan(args: argparse.Namespace) -> int:
               f"`aegis scan` is for external hosts/URLs.", file=sys.stderr)
         return 2
 
-    print(f"[authorized scan] {args.tool} → {args.target}  (network enabled)")
+    active = getattr(args, "active", False)
+    depth = "active (attack payloads)" if active else "baseline"
+    print(f"[authorized scan] {args.tool} → {args.target}  "
+          f"(network enabled{', ' + depth if args.tool == 'dast' else ''})")
     # Pass the target under every arg name adapters read (host/url); extras are
-    # ignored by argv().
+    # ignored by argv(). `active` selects ZAP's full active scan (dast only).
     result = tool.run(args.target, network="bridge",
-                      host=args.target, url=args.target)
+                      host=args.target, url=args.target, active=active)
     print(f"  status={result.status.value}  "
           f"candidates={len(result.candidates)}  "
           f"({result.duration_ms:.0f} ms)")
@@ -388,6 +396,10 @@ def build_parser() -> argparse.ArgumentParser:
     scan_p.add_argument("--authorized", action="store_true",
                         help="confirm you are permitted to test this target "
                              "(required; external scans are refused otherwise)")
+    scan_p.add_argument("--active", action="store_true",
+                        help="dast only: run ZAP's ACTIVE scanner (sends real "
+                             "attack payloads; intrusive & slow). Default is a "
+                             "passive baseline scan.")
     scan_p.add_argument("--mode",
                         choices=["full-llm", "llm+decision", "static"],
                         default=None, help="operating mode (LLM reasoning over "
