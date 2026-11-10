@@ -20,7 +20,7 @@ from aegis.analysis.pipeline import promote_candidate
 from aegis.analysis.triage import is_true_positive
 from aegis.config import DEFAULT_POSTERIOR_MIN, AegisConfig
 from aegis.decision import DecisionRouter
-from aegis.engines.base import EngineReport, _candidates_from_tools
+from aegis.engines.base import EngineReport
 from aegis.knowledge.base import KnowledgeBase
 from aegis.knowledge.loader import load_candidates
 from aegis.knowledge.models import Candidate, Finding
@@ -86,6 +86,60 @@ class SampleProbe:
     def probe(self, surface: str) -> List[Candidate]:
         return [c for c in self._candidates if c.component == surface]
 
+    def tool_info(self, surface: str):
+        return "recon.probe", {"surface": surface}
+
+    def status(self, surface: str) -> str:
+        return "ok"
+
+
+def _grouped_tool_results(registry, kind_str: str, target: str,
+                          tool_names=None) -> list:
+    """Run each available tool once, keeping its results grouped by tool (so the
+    agent can select tools one at a time with real names, args and status)."""
+    from aegis.tools.base import ToolKind
+    kind = ToolKind(kind_str)
+    if tool_names:
+        tools = [registry.get(n) for n in tool_names
+                 if registry.get(n).kind == kind and registry.get(n).available()]
+    else:
+        tools = registry.available(kind)
+    out = []
+    for tool in tools:
+        result = tool.run(target)
+        for c in result.candidates:
+            c.source_engine = kind_str
+        out.append({"tool": result.tool,
+                    "args": {"target": str(target) or "sample-target"},
+                    "status": result.status.value,
+                    "errors": list(result.errors),
+                    "candidates": list(result.candidates) if result.ok else []})
+    return out
+
+
+class RegistryProbe:
+    """Agent-selectable view over real tool adapters: each 'surface' is a tool.
+
+    Selecting a tool reveals its (already-run) candidates and the real tool name,
+    arguments and status, so the transcript shows genuine adapter calls.
+    """
+
+    def __init__(self, grouped: Sequence[dict]) -> None:
+        self._order = [g["tool"] for g in grouped]
+        self._by = {g["tool"]: g for g in grouped}
+
+    def surfaces(self) -> List[str]:
+        return list(self._order)
+
+    def probe(self, label: str) -> List[Candidate]:
+        return list(self._by.get(label, {}).get("candidates", []))
+
+    def tool_info(self, label: str):
+        return label, self._by.get(label, {}).get("args", {})
+
+    def status(self, label: str) -> str:
+        return self._by.get(label, {}).get("status", "ok")
+
 
 class DynamicEngine:
     """Strix-style dynamic engine conforming to the Orchestrator Engine protocol."""
@@ -102,6 +156,7 @@ class DynamicEngine:
         self._registry = registry
         self._tool_names = tool_names
         self._tool_runs: list = []
+        self._grouped: Optional[list] = None  # cached per-tool results (registry)
         self._planner = planner  # generative LLM (full-llm / llm+decision modes)
         from aegis.engines.events import NullSink
         self._events = event_sink or NullSink()
@@ -135,9 +190,15 @@ class DynamicEngine:
     def enumerate_candidates(self, target: str,
                              config: AegisConfig) -> Sequence[Candidate]:
         if self._registry is not None:
-            cands, self._tool_runs = _candidates_from_tools(
+            # Run each tool once, keep results grouped so the agent can select
+            # tools one at a time in the loop; flatten for router seeding.
+            self._grouped = _grouped_tool_results(
                 self._registry, self.kind, target, self._tool_names)
-            return cands
+            self._tool_runs = [{"name": g["tool"], "status": g["status"],
+                                "errors": g["errors"],
+                                "candidates": len(g["candidates"])}
+                               for g in self._grouped]
+            return [c for g in self._grouped for c in g["candidates"]]
         path = Path(target or _DEFAULT_TARGET)
         if path.is_dir():
             path = path / "candidates_dynamic.json"
@@ -150,7 +211,14 @@ class DynamicEngine:
             config: AegisConfig) -> EngineReport:
         t0 = time.perf_counter()
         candidates = list(self.enumerate_candidates(target, config))
-        probe = self._probe or SampleProbe(candidates)
+        # With a registry, the agent selects real tools (RegistryProbe); offline
+        # it probes the sample surfaces.
+        if self._probe is not None:
+            probe = self._probe
+        elif self._grouped is not None:
+            probe = RegistryProbe(self._grouped)
+        else:
+            probe = SampleProbe(candidates)
 
         # Seed the agent graph: a coordinator root with recon + exploitation.
         coordinator = AgentNode("a0001", AgentRole.COORDINATOR, "drive the test",
@@ -224,14 +292,15 @@ class DynamicEngine:
                     continue
                 seen_surfaces.add(surface)
                 # 3. ACT — the recon agent runs a tool, with arguments, and reads
-                #    its output (the real tool when wired; the sample probe else).
-                ev.emit("a0002", "tool_call", tool="recon.probe",
-                        args={"surface": surface})
+                #    its output (the real adapter when wired; the sample probe else).
+                tool_name, tool_args = probe.tool_info(surface)
+                ev.emit("a0002", "tool_call", tool=tool_name, args=tool_args)
                 found = probe.probe(surface)
                 pending.extend(found)
                 recon.steps_spent += 1
                 titles = ", ".join(c.title for c in found) or "nothing"
-                ev.emit("a0002", "tool_output", tool="recon.probe", status="ok",
+                ev.emit("a0002", "tool_output", tool=tool_name,
+                        status=probe.status(surface),
                         summary=f"surfaced {len(found)} lead(s): {titles}",
                         count=len(found))
                 recon.log(seq, "probe", surface,
