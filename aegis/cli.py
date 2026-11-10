@@ -173,6 +173,49 @@ def _cmd_calibrate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_dashboard(args: argparse.Namespace) -> int:
+    """One command: run both engines over the sample target, then open the UI."""
+    import shutil
+    import subprocess
+
+    from aegis.engines import default_orchestrator
+    from aegis.engines.base import RunConfig
+
+    ui_dir = _REPO_ROOT / "ui"
+    data_dir = ui_dir / "public" / "data"
+    registry = None
+    if args.use_tools:
+        from aegis.tools import default_registry
+        registry = default_registry()
+    aegis_cfg = AegisConfig.from_env(
+        backend=args.backend, local_only=not args.allow_egress,
+        log_path=data_dir / "decisions.jsonl")
+    config = RunConfig(target=str(args.target), aegis=aegis_cfg,
+                       parallel=not args.serial, out_dir=data_dir,
+                       run_id=args.run_id)
+    result = default_orchestrator(registry=registry).run(config)
+    _print_run(result)
+    print(f"\nWrote unified run to {data_dir}")
+
+    if args.no_serve:
+        print("Start the dashboard with:  cd ui && npm run dev")
+        return 0
+    if shutil.which("npm") is None:
+        print("npm not found — install Node, then: cd ui && npm run dev")
+        return 0
+    if not (ui_dir / "node_modules").exists():
+        print("Installing dashboard dependencies (first run)…")
+        if subprocess.run(["npm", "install"], cwd=ui_dir).returncode != 0:
+            print("npm install failed — run it manually in ui/.")
+            return 1
+    print("\nStarting the dashboard (http://localhost:5173) — Ctrl-C to stop.")
+    try:
+        subprocess.run(["npm", "run", "dev"], cwd=ui_dir)
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="aegis",
@@ -227,6 +270,21 @@ def build_parser() -> argparse.ArgumentParser:
     cal.add_argument("--out", type=Path, default=None,
                      help="write the full calibration report JSON here")
     cal.set_defaults(func=_cmd_calibrate)
+
+    dash = sub.add_parser(
+        "dashboard",
+        help="run both engines over the sample target and open the dashboard")
+    dash.add_argument("--target", type=Path, default=_DEFAULT_TARGET)
+    dash.add_argument("--backend", choices=["static", "basal", "jev", "llm"],
+                      default="static")
+    dash.add_argument("--use-tools", action="store_true",
+                      help="source candidates from the tool registry")
+    dash.add_argument("--allow-egress", action="store_true")
+    dash.add_argument("--serial", action="store_true")
+    dash.add_argument("--run-id", default=None)
+    dash.add_argument("--no-serve", action="store_true",
+                      help="write the run data but do not start the dev server")
+    dash.set_defaults(func=_cmd_dashboard)
     return parser
 
 

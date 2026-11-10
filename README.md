@@ -88,7 +88,15 @@ truth), and their original test suites still pass through the shims.
 
 A local **Vite + React + Tailwind** dashboard over the unified report — net-new
 for RAPTOR, a big upgrade on Strix's TUI. It runs entirely locally (nothing
-hosted):
+hosted). **One command** runs both engines over the sample target and opens it:
+
+```bash
+aegis dashboard                    # run both engines + open the dashboard (http://localhost:5173)
+aegis dashboard --use-tools        # source candidates from the 17 tool adapters
+aegis dashboard --no-serve         # just write ui/public/data, don't start the server
+```
+
+Or drive the pieces yourself:
 
 ```bash
 aegis run --out ui/public/data     # produce a run for the dashboard
