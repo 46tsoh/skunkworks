@@ -149,7 +149,10 @@ class BrowserDockerTool(DockerBackedTool):
     entrypoint = "node"
     # Mount points inside the container.
     DRIVER_SRC = _DRIVER_SRC
-    DRIVER_PATH = "/aegis/driver/navlog.js"   # driver script, mounted read-only
+    # Mounted inside the image's app dir so Node resolves the bundled
+    # puppeteer-core from the sibling /usr/src/app/node_modules (require()
+    # resolution walks up from the script's directory, not the cwd).
+    DRIVER_PATH = "/usr/src/app/aegis_navlog.js"   # driver script, mounted read-only
     INPUT_DIR = "/aegis/site"                 # saved/served site, mounted read-only
     # Chromium can only hand us the navigation log as a file; request a writable
     # report dir and read the JSON back from it (not stdout).

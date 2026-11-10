@@ -109,6 +109,10 @@ async function main() {
     const console_ = [];
     const mixed = new Map();
     page.on('console', (m) => console_.push({ level: m.type(), text: m.text() }));
+    // The analyzed page is untrusted and may pop a JS dialog (alert/confirm/
+    // prompt/beforeunload), which blocks headless navigation indefinitely.
+    // Dismiss every dialog so a hostile page can't hang the run.
+    page.on('dialog', (d) => { d.dismiss().catch(() => {}); });
     // An http:// sub-resource requested by an https page is mixed content.
     page.on('request', (r) => {
       const u = r.url();
@@ -118,7 +122,16 @@ async function main() {
     });
 
     await page.evaluateOnNewDocument(instrumentation);
-    await page.goto(args.target, { waitUntil: 'networkidle2', timeout: 30000 });
+    // 'load' (not 'networkidle2'): the target is a local file:// page served
+    // under --network none, where 'networkidle2' never settles and the
+    // navigation times out. 'load' fires reliably once the DOM + resources are in.
+    // A goto failure (e.g. a navigation timeout on a malformed target) must not
+    // abort the whole run — capture whatever did load and record the error.
+    try {
+      await page.goto(args.target, { waitUntil: 'load', timeout: 30000 });
+    } catch (navErr) {
+      console_.push({ level: 'error', text: 'navigation: ' + String(navErr) });
+    }
 
     const html = await page.content();
     const domSinks = await page.evaluate(() => window.__aegisSinks || []);
