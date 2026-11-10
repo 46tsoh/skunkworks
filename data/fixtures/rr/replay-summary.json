@@ -1,0 +1,49 @@
+{
+  "tool": "rr",
+  "rr_version": "5.8.0",
+  "trace_dir": "/work/vulnserver-0",
+  "recorded_events": 1842033,
+  "replay_passes": 3,
+  "findings": [
+    {
+      "id": 1,
+      "class": "use-after-free",
+      "severity": "high",
+      "location": "src/cache.c:212 (free_entry)",
+      "access": "read 8 bytes @ 0x6120000000a0",
+      "allocated_at": "src/cache.c:140 (new_entry)",
+      "freed_at": "src/cache.c:198 (evict_entry)",
+      "event": 148203,
+      "ticks": 148203,
+      "deterministic": true
+    },
+    {
+      "id": 2,
+      "class": "data-race",
+      "severity": "medium",
+      "location": "src/stats.c:77 (incr_counter)",
+      "access": "write 4 bytes @ 0x55a0 from thread T3 racing T1",
+      "event": 902110,
+      "deterministic": false
+    },
+    {
+      "id": 3,
+      "class": "uninitialized-read",
+      "severity": "low",
+      "location": "src/proto.c:44 (parse_flags)",
+      "access": "read 4 bytes @ stack+0x1c",
+      "event": 33120,
+      "deterministic": true
+    },
+    {
+      "id": 4,
+      "class": "double-free",
+      "severity": "high",
+      "cwe": "CWE-415",
+      "location": "src/conn.c:321 (close_conn)",
+      "freed_at": "src/conn.c:305 (close_conn)",
+      "event": 1337001,
+      "deterministic": true
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "target": "bin/parse_record",
+  "crashes": [
+    {
+      "input": "crashes/id:000000,sig:11,src:000421",
+      "signal": "SIGSEGV",
+      "classification": "EXPLOITABLE",
+      "hash": {"major": "0x4f2a9c11", "minor": "0x11bc77de"},
+      "pc": "0x0000555555556abc",
+      "faulting_instruction": "mov qword ptr [rax], rdx",
+      "description": "Likely write to controlled address (near return)",
+      "backtrace": ["process_token", "parse_record", "main"],
+      "cwe": "CWE-787"
+    },
+    {
+      "input": "crashes/id:000001,sig:06,src:000512",
+      "signal": "SIGABRT",
+      "classification": "PROBABLY_EXPLOITABLE",
+      "hash": {"major": "0x9a3b1200", "minor": "0x4401aef2"},
+      "pc": "0x00007ffff7a9b3cc",
+      "faulting_instruction": "call __stack_chk_fail",
+      "description": "Stack canary corruption detected (__stack_chk_fail)",
+      "backtrace": ["copy_field", "parse_record", "main"],
+      "cwe": "CWE-121"
+    },
+    {
+      "input": "crashes/id:000002,sig:11,src:000733",
+      "signal": "SIGSEGV",
+      "classification": "PROBABLY_NOT_EXPLOITABLE",
+      "hash": {"major": "0x02ffaa10", "minor": "0x00000000"},
+      "pc": "0x0000555555557120",
+      "faulting_instruction": "mov eax, dword ptr [rcx]",
+      "description": "Read from invalid pointer during parsing",
+      "backtrace": ["read_len", "parse_record", "main"]
+    }
+  ]
+}

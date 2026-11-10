@@ -15,9 +15,14 @@ from typing import List, Optional
 
 from aegis.tools.base import ToolKind, ToolRegistry
 
-# Adapter modules under aegis.tools.adapters. Extended as capabilities land.
+# Adapter modules under aegis.tools.adapters. Fixture-first; the Docker-backed
+# variant takes over per name when its image is present locally.
 ADAPTER_MODULES: List[str] = [
-    "semgrep",
+    # static
+    "semgrep", "codeql", "sca", "binary", "fuzz", "crash", "forensics",
+    # dynamic
+    "recon", "web", "dast", "proxy", "browser", "shell", "sandbox", "poc",
+    "frida", "rr",
 ]
 
 

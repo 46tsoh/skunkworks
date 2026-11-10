@@ -1,0 +1,60 @@
+{
+  "SchemaVersion": 2,
+  "ArtifactName": ".",
+  "ArtifactType": "filesystem",
+  "Results": [
+    {
+      "Target": "package-lock.json",
+      "Class": "lang-pkgs",
+      "Type": "npm",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2021-23337",
+          "PkgName": "lodash",
+          "InstalledVersion": "4.17.20",
+          "FixedVersion": "4.17.21",
+          "Severity": "HIGH",
+          "Title": "lodash: command injection via template",
+          "Description": "lodash versions prior to 4.17.21 are vulnerable to command injection via the template function.",
+          "CweIDs": ["CWE-77"],
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2021-23337"
+        },
+        {
+          "VulnerabilityID": "CVE-2020-8203",
+          "PkgName": "lodash",
+          "InstalledVersion": "4.17.20",
+          "FixedVersion": "4.17.19",
+          "Severity": "MEDIUM",
+          "Title": "lodash: prototype pollution in zipObjectDeep",
+          "Description": "Prototype pollution in lodash before 4.17.19.",
+          "CweIDs": ["CWE-1321"],
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2020-8203"
+        }
+      ]
+    },
+    {
+      "Target": "requirements.txt",
+      "Class": "lang-pkgs",
+      "Type": "pip",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2019-11324",
+          "PkgName": "urllib3",
+          "InstalledVersion": "1.24.1",
+          "FixedVersion": "1.24.2",
+          "Severity": "CRITICAL",
+          "Title": "urllib3: CA certificate verification bypass",
+          "Description": "urllib3 before 1.24.2 mishandles certificate verification when a custom SSL context is used.",
+          "CweIDs": ["CWE-295"],
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2019-11324"
+        }
+      ]
+    },
+    {
+      "Target": "go.sum",
+      "Class": "lang-pkgs",
+      "Type": "gomod",
+      "Vulnerabilities": null
+    }
+  ]
+}

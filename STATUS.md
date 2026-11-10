@@ -21,11 +21,42 @@ action named. Nothing here is faked to look finished.
 |---|-----------|-------|-------------|
 | 1 | Core `aegis/` package (unified Finding/KnowledgeBase, DecisionRouter, config/env, CLI, tests) | **done** (merged #3) | — |
 | 2 | Orchestration core: one orchestrator, two pluggable engines (dynamic graph-of-agents + static hypothesis loop), shared KB + router | **done** | — (specs in `docs/specs/`, `aegis.engines`, `aegis run`) |
-| 3 | Tool/scanner adapters behind a common `Tool` interface (dynamic + static capabilities) | **not started** | spec written (`docs/specs/tool-interface.md`); implement `aegis.tools` registry + offline fixture adapters first (semgrep, SCA, recon), then binary adapters |
+| 3 | Tool/scanner adapters behind a common `Tool` interface (dynamic + static capabilities) | **done** | — (17 adapters, dockerized + fixtures, wired into engines) |
 | 4 | Analysis parity through the decision layer (exploitability chain + hypothesis posterior + triage/dedup/CVSS), calibrated on a labeled corpus | **partial** | pipeline + both engines route through the decision layer (M1/M2); add labeled corpus + calibration metrics tool |
 | 5 | Unified UI (Vite + React + Tailwind) over both engines | **not started** | scaffold after M2 exposes a run/report API |
 | 6 | End-to-end interop: one command runs both engines over the sample target → one unified deduped report + dashboard | **not started** | depends on M2, M5 |
 | 7 | Docs, tests, CI (README, architecture doc, >80% core coverage, CI) | **partial** | arch map + README done; add GitHub Actions CI (user-approved) running pytest + UI build on every PR |
+
+## Milestone 3 — done
+
+- `aegis.tools` — one common `Tool` interface (`ToolResult` / `ToolStatus` /
+  `Artifact`), a `ToolRegistry`, a `FixtureTool` and a `DockerBackedTool` base.
+- **Local Docker runtime** (`aegis.tools.runtime`): binary tools run in local
+  containers with `--network none`, `--pull=never`, read-only mounts, and
+  CPU/memory/time caps. Verified live (a container ran; the no-network isolation
+  was confirmed by an in-container network probe returning `NO_NETWORK`).
+- **17 adapters**, each fixture-first (offline parser + recorded fixture) with a
+  Docker/host live path that degrades to the fixture when the image/binary is
+  absent:
+  - static: `semgrep`, `codeql` (+SMT path-feasibility note), `sca`/SBOM,
+    `binary`, `fuzz`, `crash`, `forensics` (git-history, host-local).
+  - dynamic: `recon`, `web`, `dast`, `proxy`, `browser`, `shell`, `sandbox`,
+    `poc`, `frida`, `rr`.
+- Wired into both engines: `aegis run --use-tools` sources candidates from the
+  registry (fixtures offline; live Docker tools when images are pulled) and
+  produces one unified report. New `aegis tools` shows adapter availability.
+- `docker/` manifest + `pull-images.sh` to fetch images locally (optional,
+  incremental). Image choices are best-effort public refs where no canonical
+  one exists (noted in adapter source + `docker/README.md`); the parser is the
+  tested contract.
+- Tests: **226 passing**, **96%** coverage. Fully offline/no-image in CI.
+
+### Verify milestone 3
+```bash
+.venv/bin/aegis tools                 # adapter inventory + availability
+.venv/bin/aegis run --use-tools       # both engines sourced from the tool registry
+./docker/pull-images.sh               # (optional) pull images to run tools live
+```
 
 ## Milestone 2 — done
 

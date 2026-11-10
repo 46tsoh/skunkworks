@@ -27,6 +27,8 @@ packages = [
     "aegis.knowledge",
     "aegis.analysis",
     "aegis.engines",
+    "aegis.tools",
+    "aegis.tools.adapters",
 ]
 
 [tool.pytest.ini_options]

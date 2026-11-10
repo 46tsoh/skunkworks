@@ -118,6 +118,32 @@ class RunResult:
 _RANK_KEY = lambda f: (f.exploitable, f.cvss_score, f.posterior)  # noqa: E731
 
 
+def _candidates_from_tools(registry, kind_str: str, target: str,
+                           tool_names=None) -> list:
+    """Collect candidates by running the registry's available tools of a kind.
+
+    Used by an engine configured with a ToolRegistry: each tool that is
+    available (fixture offline, or Docker-backed when its image is present) runs
+    against the target and contributes its candidates, stamped with the engine's
+    kind as provenance.
+    """
+    from aegis.tools.base import ToolKind
+    kind = ToolKind(kind_str)
+    if tool_names:
+        tools = [registry.get(n) for n in tool_names
+                 if registry.get(n).kind == kind and registry.get(n).available()]
+    else:
+        tools = registry.available(kind)
+    out: list = []
+    for tool in tools:
+        result = tool.run(target)
+        if result.ok:
+            for c in result.candidates:
+                c.source_engine = kind_str
+            out.extend(result.candidates)
+    return out
+
+
 class Orchestrator:
     """Drives registered engines over one target into one unified report."""
 

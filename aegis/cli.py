@@ -118,10 +118,28 @@ def _cmd_run(args: argparse.Namespace) -> int:
         target=str(args.target), aegis=aegis_cfg,
         parallel=not args.serial, out_dir=args.out, run_id=args.run_id,
     )
-    result = default_orchestrator().run(config)
+    registry = None
+    if args.use_tools:
+        from aegis.tools import default_registry
+        registry = default_registry()
+    result = default_orchestrator(registry=registry).run(config)
     _print_run(result)
     if args.out:
         print(f"Wrote {result.report_path} and {log_path}")
+    return 0
+
+
+def _cmd_tools(args: argparse.Namespace) -> int:
+    from aegis.tools import default_registry, docker_available
+    reg = default_registry(prefer_docker=not args.fixtures_only)
+    print(f"=== Aegis tools (docker daemon: "
+          f"{'up' if docker_available() else 'absent'}) ===")
+    report = reg.status_report()
+    for name in reg.names():
+        row = report[name]
+        live = "live" if row["available"] and not args.fixtures_only else "fixture"
+        print(f"  {name:10} [{row['kind']:7}] "
+              f"binary={row['requires_binary'] or '-':8} available={row['available']}")
     return 0
 
 
@@ -158,9 +176,17 @@ def build_parser() -> argparse.ArgumentParser:
                        help="run engines serially instead of in parallel")
     run_p.add_argument("--run-id", default=None,
                        help="fixed run id (deterministic output)")
+    run_p.add_argument("--use-tools", action="store_true",
+                       help="source candidates from the tool registry (fixtures "
+                            "offline; live Docker tools when images are present)")
     run_p.add_argument("--out", type=Path, default=None,
                        help="directory for report.json and decisions.jsonl")
     run_p.set_defaults(func=_cmd_run)
+
+    tools_p = sub.add_parser("tools", help="list tool adapters and availability")
+    tools_p.add_argument("--fixtures-only", action="store_true",
+                         help="report the offline fixture adapters only")
+    tools_p.set_defaults(func=_cmd_tools)
     return parser
 
 

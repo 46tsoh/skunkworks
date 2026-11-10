@@ -67,8 +67,12 @@ def run_container(
     Local-only by construction: ``--network none`` unless a caller explicitly
     overrides ``network`` (no adapter should). Mounts are read-only.
     """
-    cmd: List[str] = ["docker", "run", "--rm", f"--network={network}",
-                      f"--memory={memory}", f"--cpus={cpus}"]
+    # --pull=never: a scan must never pull an image (that would touch the
+    # network). Images are fetched ahead of time via docker/pull-images.sh;
+    # adapters check image_present() before calling this.
+    cmd: List[str] = ["docker", "run", "--rm", "--pull=never",
+                      f"--network={network}", f"--memory={memory}",
+                      f"--cpus={cpus}"]
     if entrypoint is not None:
         cmd += ["--entrypoint", entrypoint]
     for host, container in (mounts or []):

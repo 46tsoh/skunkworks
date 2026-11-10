@@ -1,0 +1,20 @@
+{
+  "target": "bin/parse_record",
+  "out_dir": "out/default",
+  "fuzzer_stats": {
+    "afl_banner": "parse_record",
+    "run_time": 3600,
+    "cycles_done": 4,
+    "execs_done": 125000000,
+    "execs_per_sec": 3412.5,
+    "corpus_count": 1203,
+    "saved_crashes": 3,
+    "saved_hangs": 1,
+    "last_find": 1699503210
+  },
+  "crashes": [
+    "id:000000,sig:11,src:000421,time:118223,execs:4201337,op:havoc,rep:8",
+    "id:000001,sig:06,src:000512,time:233410,execs:7781002,op:havoc,rep:2",
+    "id:000002,sig:11,src:000733,time:901233,execs:21004551,op:splice,rep:4"
+  ]
+}

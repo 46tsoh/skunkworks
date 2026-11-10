@@ -1,0 +1,75 @@
+{
+  "@programName": "ZAP",
+  "@version": "2.15.0",
+  "@generated": "Mon, 10 Nov 2025 00:00:00",
+  "site": [
+    {
+      "@name": "http://127.0.0.1:8080",
+      "@host": "127.0.0.1",
+      "@port": "8080",
+      "@ssl": "false",
+      "alerts": [
+        {
+          "pluginid": "40018",
+          "alertRef": "40018",
+          "alert": "SQL Injection",
+          "name": "SQL Injection",
+          "riskcode": "3",
+          "confidence": "2",
+          "riskdesc": "High (Medium)",
+          "desc": "<p>SQL injection may be possible.</p>",
+          "cweid": "89",
+          "wascid": "19",
+          "instances": [
+            {
+              "uri": "http://127.0.0.1:8080/login",
+              "method": "POST",
+              "param": "username",
+              "attack": "zap' OR '1'='1' -- ",
+              "evidence": "you have an error in your SQL syntax"
+            }
+          ]
+        },
+        {
+          "pluginid": "6",
+          "alertRef": "6",
+          "alert": "Path Traversal",
+          "name": "Path Traversal",
+          "riskcode": "2",
+          "confidence": "3",
+          "riskdesc": "Medium (High)",
+          "desc": "<p>The Path Traversal technique allows access to files outside the web root.</p>",
+          "cweid": "22",
+          "wascid": "33",
+          "instances": [
+            {
+              "uri": "http://127.0.0.1:8080/download",
+              "method": "GET",
+              "param": "file",
+              "attack": "../../../../etc/passwd",
+              "evidence": "root:x:0:0"
+            }
+          ]
+        },
+        {
+          "pluginid": "10038",
+          "alertRef": "10038-1",
+          "alert": "Content Security Policy (CSP) Header Not Set",
+          "name": "Content Security Policy (CSP) Header Not Set",
+          "riskcode": "1",
+          "confidence": "3",
+          "riskdesc": "Low (High)",
+          "desc": "<p>Content Security Policy is an added layer of security.</p>",
+          "cweid": "693",
+          "wascid": "15",
+          "instances": [
+            {
+              "uri": "http://127.0.0.1:8080/",
+              "method": "GET"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

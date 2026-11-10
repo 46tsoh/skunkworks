@@ -1,0 +1,9 @@
+sca-shell-scan v0.4.2  (scripted command-exec scanner)
+scanning target: /work
+running: 3 checks across 2 scripts
+--------------------------------------------------------------------
+[HIGH]   CWE-78  scripts/deploy.sh:47  OS command injection: user-controlled $BRANCH interpolated into eval
+[MEDIUM] CWE-22  scripts/backup.sh:12  Path traversal: unsanitized archive member extracted under $DEST
+[LOW]    CWE-532 scripts/entrypoint.sh:5  Sensitive data exposure: API token echoed to stdout on startup
+--------------------------------------------------------------------
+3 issue(s) reported, 0 errors
