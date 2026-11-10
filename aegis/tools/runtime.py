@@ -100,7 +100,13 @@ def run_container(
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)
         return ContainerRun(r.returncode, r.stdout, r.stderr)
     except subprocess.TimeoutExpired as exc:
-        return ContainerRun(124, exc.stdout or "", exc.stderr or "", timed_out=True)
+        # On timeout, subprocess may hand back bytes for stdout/stderr even with
+        # text=True; normalize to str so callers can concatenate it safely.
+        def _s(v):
+            if v is None:
+                return ""
+            return v.decode("utf-8", "replace") if isinstance(v, bytes) else v
+        return ContainerRun(124, _s(exc.stdout), _s(exc.stderr), timed_out=True)
 
 
 def run_local(

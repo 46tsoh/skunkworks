@@ -211,6 +211,10 @@ class DockerBackedTool:
     # (sandbox/shell/poc) — is refused a network grant so `aegis scan` can never
     # turn a local sandbox into a network-reaching one (isolation bypass).
     allows_network = False
+    # Override the image's ENTRYPOINT when it wraps our command in a startup
+    # shim we must bypass (e.g. the CodeQL image's setup.py). Default None keeps
+    # the image's own entrypoint.
+    entrypoint = None
 
     def __init__(self, parser: Parser) -> None:
         self._parser = parser
@@ -312,7 +316,8 @@ class DockerBackedTool:
                                mounts=mounts, workdir=self.container_workdir,
                                timeout_s=self.timeout_s, network=network,
                                volumes=self.volumes(), rw_mounts=rw_mounts,
-                               rw_volumes=self.rw_volumes())
+                               rw_volumes=self.rw_volumes(),
+                               entrypoint=self.entrypoint)
             raw = cr.stdout + (("\n[stderr]\n" + cr.stderr) if cr.stderr else "")
             # Fail-closed: a timeout or an unexpected exit code is an ERROR, and
             # no candidates are surfaced from a failed run.
