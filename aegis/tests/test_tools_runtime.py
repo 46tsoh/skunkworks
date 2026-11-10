@@ -5,7 +5,7 @@ import subprocess
 import pytest
 
 import aegis.tools.runtime as rt
-from aegis.tools.base import ToolKind
+from aegis.tools.base import ToolKind, ToolStatus
 
 
 @pytest.fixture(autouse=True)
@@ -50,6 +50,61 @@ def test_web_tool_declares_templates_volume():
     from aegis.tools.adapters.web import make_docker
     assert make_docker().volumes() == [
         ("aegis-nuclei-templates", "/root/nuclei-templates")]
+
+
+def test_run_container_rw_mount_is_writable(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(rt.subprocess, "run",
+                        lambda cmd, **k: (captured.__setitem__("cmd", cmd)
+                                          or subprocess.CompletedProcess(cmd, 0, "", "")))
+    rt.run_container("img:1", ["scan"], network="bridge",
+                     rw_mounts=[("/tmp/out", "/zap/wrk")])
+    cmd = captured["cmd"]
+    # a writable mount has NO :ro suffix (unlike every read-only mount)
+    assert any(p.endswith(":/zap/wrk") for p in cmd)
+    assert not any(p.endswith(":/zap/wrk:ro") for p in cmd)
+
+
+def test_report_emitting_tool_reads_file_and_cleans_up(monkeypatch, tmp_path):
+    """A tool whose report_mount() is set parses the report FILE (not stdout)
+    and removes its scratch dir afterwards."""
+    import aegis.tools.base as base
+    from aegis.knowledge.models import Candidate
+
+    monkeypatch.setattr(base, "docker_available", lambda: True)
+    monkeypatch.setattr(base, "image_present", lambda image: True)
+
+    seen = {}
+
+    class ReportTool(base.DockerBackedTool):
+        name, kind, image = "rep", ToolKind.DYNAMIC, "img:1"
+        allows_network = True
+
+        def report_mount(self):
+            return ("/out", "r.json")
+
+        def argv(self, target, **opts):
+            seen["report_path"] = opts.get("report_path")
+            return ["scan"]
+
+    def fake_run(image, args, **k):
+        host, container = k["rw_mounts"][0]
+        seen["host"] = host
+        # the real tool writes its report into the mounted dir
+        (__import__("pathlib").Path(host) / "r.json").write_text('{"x": 1}')
+        return rt.ContainerRun(0, "stdout-ignored", "")
+
+    monkeypatch.setattr(base, "run_container", fake_run)
+    tool = ReportTool(parser=lambda raw, t: (
+        [Candidate(id="c1", title=raw.strip(), cwe="CWE-20",
+                   component=t, cvss_vector="")] if raw.strip() else []))
+    result = tool.run("http://t", network="bridge")
+
+    assert result.status == ToolStatus.OK
+    assert result.candidates and result.candidates[0].title == '{"x": 1}'
+    assert seen["report_path"] == "/out/r.json"   # argv got the in-container path
+    import os
+    assert not os.path.exists(seen["host"])        # scratch dir cleaned up
 
 
 def test_run_container_timeout(monkeypatch):

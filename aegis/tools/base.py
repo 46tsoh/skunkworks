@@ -10,6 +10,9 @@ whole pipeline is testable with no binaries and no network.
 
 from __future__ import annotations
 
+import os
+import shutil
+import tempfile
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -185,6 +188,16 @@ class DockerBackedTool:
         # (nuclei templates) override this.
         return []
 
+    def report_mount(self):
+        # Some scanners cannot stream their machine-readable report to stdout
+        # and must write it to a *file* (ZAP writes JSON under /zap/wrk). A tool
+        # that returns ``(container_dir, filename)`` here gets a fresh, empty,
+        # writable host dir mounted at ``container_dir``; ``argv()`` receives the
+        # in-container report path as ``opts["report_path"]``, and ``run()``
+        # parses the file's contents (not stdout) once the container exits.
+        # Default None: the tool's report is on stdout.
+        return None
+
     def run(self, target: str, *, network: str = "none", **opts) -> ToolResult:
         t0 = time.perf_counter()
         if not docker_available():
@@ -219,11 +232,25 @@ class DockerBackedTool:
                 self.name, ToolStatus.ERROR, target=target,
                 errors=[f"target {target!r} not found / not mountable"],
                 duration_ms=(time.perf_counter() - t0) * 1000.0)
+        # A tool that writes its report to a file (not stdout) gets a fresh
+        # writable host dir mounted at its report directory; we read the report
+        # back from there and clean the dir up afterwards.
+        report_spec = self.report_mount()
+        rw_mounts = []
+        report_dir = None
+        if report_spec is not None:
+            container_dir, filename = report_spec
+            report_dir = tempfile.mkdtemp(prefix="aegis-report-")
+            # The scanner may run as a non-root UID inside the container
+            # (ZAP is uid 1000); make the empty scratch dir writable by it.
+            os.chmod(report_dir, 0o777)
+            rw_mounts = [(report_dir, container_dir)]
+            opts = {**opts, "report_path": f"{container_dir}/{filename}"}
         try:
             cr = run_container(self.image, self.argv(target, **opts),
                                mounts=mounts, workdir=self.container_workdir,
                                timeout_s=self.timeout_s, network=network,
-                               volumes=self.volumes())
+                               volumes=self.volumes(), rw_mounts=rw_mounts)
             raw = cr.stdout + (("\n[stderr]\n" + cr.stderr) if cr.stderr else "")
             # Fail-closed: a timeout or an unexpected exit code is an ERROR, and
             # no candidates are surfaced from a failed run.
@@ -239,7 +266,14 @@ class DockerBackedTool:
                             f"{sorted(self.ok_exit_codes)})"],
                     metadata={"image": self.image, "exit": cr.exit_code},
                     duration_ms=(time.perf_counter() - t0) * 1000.0)
-            cands = self._parser(cr.stdout, target)
+            # Parse the report file for file-emitting tools; stdout otherwise.
+            if report_dir is not None:
+                report_file = Path(report_dir) / report_spec[1]
+                parse_input = (report_file.read_text(encoding="utf-8")
+                               if report_file.exists() else "")
+            else:
+                parse_input = cr.stdout
+            cands = self._parser(parse_input, target)
             for c in cands:
                 c.metadata.setdefault("tool", self.name)
             return ToolResult(self.name, ToolStatus.OK, candidates=cands, raw=raw,
@@ -250,6 +284,9 @@ class DockerBackedTool:
             return ToolResult(self.name, ToolStatus.ERROR, target=target,
                               errors=[f"{type(exc).__name__}: {exc}"],
                               duration_ms=(time.perf_counter() - t0) * 1000.0)
+        finally:
+            if report_dir is not None:
+                shutil.rmtree(report_dir, ignore_errors=True)
 
 
 class ToolRegistry:

@@ -110,6 +110,38 @@ def test_dast_parse_handles_empty():
     assert dast.parse('{"site": []}', "t") == []
 
 
+def test_dast_argv_baseline_is_default_and_passive():
+    # Default depth runs the PASSIVE baseline (no attack payloads). -J takes a
+    # bare filename (ZAP resolves it under its working dir, the writable mount).
+    tool = dast.make_docker()
+    argv = tool.argv("http://t")
+    assert argv[0] == "zap-baseline.py"
+    assert argv[1:3] == ["-t", "http://t"]
+    j = argv.index("-J")
+    assert argv[j + 1] == tool.REPORT_FILE and "/" not in argv[j + 1]
+
+
+def test_dast_argv_active_uses_full_scan():
+    # --active selects the full ACTIVE scanner; writes to the same report file.
+    tool = dast.make_docker()
+    argv = tool.argv("http://t", active=True)
+    assert argv[0] == "zap-full-scan.py"
+    assert argv[1:3] == ["-t", "http://t"]
+    assert argv[argv.index("-J") + 1] == tool.REPORT_FILE
+
+
+def test_dast_declares_report_mount():
+    # ZAP can only emit JSON to a file in a mounted dir; the tool must ask for
+    # a writable report mount so run() reads the report back.
+    cdir, fname = dast.make_docker().report_mount()
+    assert cdir == "/zap/wrk" and fname.endswith(".json")
+
+
+def test_dast_active_scan_has_longer_timeout():
+    # The active scanner is slow; the container ceiling must accommodate it.
+    assert dast.make_docker().timeout_s >= 600.0
+
+
 # -- availability degradation (no image / no docker) -------------------------
 @pytest.mark.parametrize("mod", [recon, web, dast])
 def test_dynamic_tool_unavailable_without_image(monkeypatch, mod):
@@ -139,8 +171,19 @@ def test_dynamic_tool_parses_when_image_present(monkeypatch, mod, n):
     monkeypatch.setattr(base, "docker_available", lambda: True)
     monkeypatch.setattr(base, "image_present", lambda image: True)
     fixture_text = mod._FIXTURE.read_text()
-    monkeypatch.setattr(base, "run_container",
-                        lambda *a, **k: ContainerRun(0, fixture_text, ""))
+
+    spec = mod.make_docker().report_mount()
+
+    def fake_run(*a, **k):
+        # File-emitting tools (dast) read their report from the writable mount,
+        # not stdout — drop the fixture there so the parser sees it.
+        from pathlib import Path as _P
+        for host, _container in (k.get("rw_mounts") or []):
+            if spec:
+                (_P(host) / spec[1]).write_text(fixture_text, encoding="utf-8")
+        return ContainerRun(0, fixture_text, "")
+
+    monkeypatch.setattr(base, "run_container", fake_run)
     result = mod.make_docker().run("http://127.0.0.1:8080")
     assert result.status == ToolStatus.OK
     assert len(result.candidates) == n

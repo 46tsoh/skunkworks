@@ -7,7 +7,7 @@ crash	static	aflplusplus/aflplusplus:4.21c
 forensics	static	HOST (runs on host via git/python; no image)
 recon	dynamic	instrumentisto/nmap:7.94
 web	dynamic	projectdiscovery/nuclei:v3.3.5
-dast	dynamic	zaproxy/zaproxy:stable
+dast	dynamic	ghcr.io/zaproxy/zaproxy:stable
 proxy	dynamic	mitmproxy/mitmproxy:11.1.3
 browser	dynamic	zenika/alpine-chrome:124
 shell	dynamic	alpine:3.20

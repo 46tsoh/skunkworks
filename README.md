@@ -50,7 +50,17 @@ aegis dashboard                         # read the agent transcript over the rea
 # drive it with a model (Claude plans, Jev decides) for richer reasoning:
 aegis scan --target scanme.nmap.org --tool recon --authorized \
            --mode llm+decision --allow-egress --out ui/public/data
+
+# web scan (nuclei templates) and DAST (OWASP ZAP) against an authorized web app:
+aegis scan --target http://demo.testfire.net --tool web  --authorized --out ui/public/data
+aegis scan --target http://demo.testfire.net --tool dast --authorized --out ui/public/data           # passive baseline (safe, fast)
+aegis scan --target http://demo.testfire.net --tool dast --authorized --active --out ui/public/data   # ACTIVE scan — sends real attack payloads
 ```
+
+The `dast` tool defaults to a **passive baseline** (spider + passive rules, no
+attack traffic). `--active` runs ZAP's **active scanner**, which sends real
+attack payloads (SQLi, XSS, traversal…) to every parameter — intrusive and slow,
+so it is opt-in and, like every scan, still gated behind `--authorized`.
 
 ## Tools
 
