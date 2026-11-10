@@ -78,6 +78,40 @@ aegis run --target /path/to/repo --use-tools --out ui/public/data
   query packs ship in the image. Builds a DB then analyzes (slow; far slower if
   the image is emulated on a non-amd64 host).
 
+### Client-side DAST on recorded/saved artifacts (offline, local)
+
+The `proxy` (mitmproxy) and `browser` (headless Chromium) adapters find bugs
+that only show on the wire or in the rendered page, and they run **fully
+offline** (`--network none`) over an artifact you capture out-of-band — so no
+live third-party traffic is generated at scan time. Pull their images once with
+`./docker/pull-images.sh` (no data volume is provisioned — the images are all
+they need).
+
+```bash
+# proxy: capture traffic ONCE against an authorized target, then replay offline.
+#   mitmproxy itself does the live capture out-of-band (you run it, authorized):
+mitmdump -w flows                       # drive the app through the proxy, then stop
+#   the adapter replays the recording with no proxy server (-n) and converts it
+#   to HAR in a writable report mount, which it reads back and parses:
+aegis run --target /path/to/flows --use-tools --out ui/public/data   # tool: proxy
+
+# browser: point it at a locally saved/served copy of the site. A read-only
+#   driver (docker/drivers/browser_navlog.js) drives the image's Chromium with
+#   --no-sandbox, writes a navigation-log JSON to a report mount, read back and
+#   parsed for DOM-XSS sinks, mixed content and secrets in client JS:
+aegis run --target /path/to/saved-site --use-tools --out ui/public/data  # tool: browser
+```
+
+Both mount their inputs (recorded flow / saved site / driver script)
+**read-only** and emit their machine report to a writable mount that the base
+class's hardened reader reads back — the same file-report mechanics ZAP uses.
+The parsers (the tested contract) are identical to the offline fixtures.
+
+> Image tags for these two are **best-effort public references**
+> (`mitmproxy/mitmproxy:11.1.3`, `zenika/alpine-chrome:124-with-puppeteer`);
+> swap the `IMAGE` constant / `docker/images.txt` entry if you build a different
+> local image — the parser is unaffected. See [`docker/README.md`](docker/README.md).
+
 ### Autonomous red-team (scope-gated) — `aegis exploit`
 
 Aegis's second use case (OSAI / CTF): the engine *acts* on a weakness to produce
