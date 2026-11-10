@@ -168,6 +168,15 @@ function Detail({ f, decisions, onClose }) {
           </div>
         </div>
 
+        {f.rationale && (
+          <div className="mt-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2.5">
+            <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-accent)]">
+              Analyst note
+            </div>
+            <p className="text-[13px] leading-relaxed text-[var(--color-muted)]">{f.rationale}</p>
+          </div>
+        )}
+
         <dl className="mt-4 grid grid-cols-[88px_1fr] gap-y-2 text-[13px]">
           <dt className="text-[var(--color-faint)]">CWE</dt><dd>{f.cwe}</dd>
           <dt className="text-[var(--color-faint)]">Component</dt>

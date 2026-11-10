@@ -30,6 +30,32 @@ def test_unknown_backend_rejected():
         AegisConfig(backend="nope")
 
 
+def test_mode_resolves_decider_and_planner():
+    # full-llm: one LLM plans AND decides
+    full = AegisConfig(mode="full-llm")
+    assert full.backend == "llm" and full.uses_planner is True
+    # llm+decision: LLM plans, the decision model decides
+    comp = AegisConfig(mode="llm+decision", local_only=False)
+    assert comp.backend == "jev" and comp.uses_planner is True
+    # llm+decision honours an alternate decision model
+    comp_basal = AegisConfig(mode="llm+decision", decision_model="basal")
+    assert comp_basal.backend == "basal" and comp_basal.uses_planner is True
+    # static: offline, no planner
+    off = AegisConfig(mode="static")
+    assert off.backend == "static" and off.uses_planner is False
+
+
+def test_unknown_mode_rejected():
+    with pytest.raises(ValueError):
+        AegisConfig(mode="nope")
+
+
+def test_llm_decision_mode_blocked_without_egress():
+    # llm+decision resolves to the remote Jev decider, so local_only blocks it.
+    with pytest.raises(ValueError):
+        AegisConfig(mode="llm+decision")  # local_only True by default
+
+
 def test_from_env_reads_overrides(monkeypatch):
     monkeypatch.setenv("AEGIS_BACKEND", "basal")
     monkeypatch.setenv("AEGIS_POSTERIOR_MIN", "0.7")

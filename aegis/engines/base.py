@@ -193,6 +193,30 @@ class Orchestrator:
                 all_cands.extend(e.enumerate_candidates(config.target, config.aegis))
             router = build_router(all_cands, config=config.aegis)
 
+        # Generative planner: in full-llm / llm+decision modes an LLM plans and
+        # writes alongside the decider. Inject it into any engine that accepts
+        # one; the decider (LLM-judge or Jev) stays the router's backend.
+        if config.aegis.uses_planner:
+            from aegis.llm import build_llm
+            planner = build_llm(
+                model=config.aegis.llm_model,
+                api_base=config.aegis.llm_api_base,
+                api_key=config.aegis.llm_api_key,
+                local_only=config.aegis.local_only,
+            )
+            for e in runnable:
+                if hasattr(e, "set_planner"):
+                    e.set_planner(planner)
+
+        # One shared live transcript sink. When writing output it streams to
+        # events.jsonl beside the report so the dashboard can tail it live.
+        from aegis.engines.events import EventSink
+        events_path = (config.out_dir / "events.jsonl") if config.out_dir else None
+        self._event_sink = EventSink(path=events_path)
+        for e in runnable:
+            if hasattr(e, "set_event_sink"):
+                e.set_event_sink(self._event_sink)
+
         reports: dict = {}
         engine_kbs: dict = {}
 

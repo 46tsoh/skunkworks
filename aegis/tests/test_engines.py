@@ -37,6 +37,95 @@ def test_dynamic_engine_graph_loop():
     assert e.graph[0].role.value == "coordinator"
     assert all(n.status.value == "completed" for n in e.graph)
 
+    # Each agent records a real, serialisable trajectory of what it did.
+    coord = e.graph[0]
+    recon = next(n for n in e.graph if n.role.value == "recon")
+    exploit = next(n for n in e.graph if n.role.value == "exploitation")
+    assert coord.trajectory and coord.trajectory[-1]["kind"] == "finish"
+    # Recon logs one probe per step it spent; exploitation one triage/promote.
+    assert len([ev for ev in recon.trajectory if ev["kind"] == "probe"]) == recon.steps_spent
+    assert any(ev["tone"] == "exploit" for ev in exploit.trajectory)  # D1 exploitable
+    assert any(ev["tone"] == "rejected" for ev in exploit.trajectory)  # D4 false positive
+    # Fully serialisable (drives the dashboard).
+    import json
+    json.dumps([n.as_dict() for n in e.graph])
+
+
+def test_dynamic_engine_planner_plans_and_writes():
+    """full-llm / llm+decision modes: the LLM plans each step and writes the
+    finding rationale, while the decider still commits the action."""
+    class StubPlanner:
+        def __init__(self):
+            self.plan_calls = 0
+            self.write_calls = 0
+
+        def complete(self, prompt):
+            if "action_index" in prompt:
+                self.plan_calls += 1
+                return '{"action_index": 0, "rationale": "probe this surface"}'
+            self.write_calls += 1
+            return "This is exploitable because input reaches a dangerous sink."
+
+    planner = StubPlanner()
+    e = DynamicEngine(planner=planner)
+    kb = KnowledgeBase()
+    router = _router_for([e])
+    report = e.run("", kb, router, AegisConfig())
+
+    # Same findings as the deterministic loop — the planner guides, the decider
+    # still decides; routing stays sound.
+    assert {f.id for f in kb.accepted} == {"D1", "D2", "D3"}
+    assert planner.plan_calls > 0 and planner.write_calls > 0
+    # The LLM's reasoning is recorded on the coordinator (shows in the UI chat).
+    coord = e.graph[0]
+    assert any(ev["kind"] == "plan" for ev in coord.trajectory)
+    # Confirmed findings carry the authored rationale.
+    assert all(f.rationale for f in kb.accepted)
+
+
+def test_dynamic_engine_emits_transcript_and_spawns_subagents():
+    """The engine emits a Strix-style transcript and the graph grows at run
+    time (a subagent per confirmed-exploitable finding)."""
+    from aegis.engines.events import EventSink
+    e = DynamicEngine(event_sink=EventSink())
+    kb = KnowledgeBase()
+    report = e.run("", kb, _router_for([e]), AegisConfig())
+    t = report.extra["transcript"]
+    kinds = {ev["type"] for ev in t}
+    # full event vocabulary present
+    assert {"spawn", "assistant", "think", "tool_call", "tool_output",
+            "decision", "message", "finding", "finish"} <= kinds
+    # tool calls carry their arguments (Strix-style)
+    tc = next(ev for ev in t if ev["type"] == "tool_call")
+    assert tc["tool"] == "recon.probe" and "surface" in tc["args"]
+    # dynamic spawning: one post-exploitation subagent per exploitable finding
+    exploitable = [f for f in kb.accepted if f.exploitable]
+    post = [n for n in e.graph if n.role.value == "post_exploitation"]
+    assert len(post) == len(exploitable) >= 1
+    assert len(e.graph) == 3 + len(post)  # coordinator + recon + exploit + subs
+
+
+def test_event_sink_streams_jsonl(tmp_path):
+    from aegis.engines.events import EventSink
+    path = tmp_path / "events.jsonl"
+    sink = EventSink(path=path)
+    sink.emit("a0001", "assistant", text="hello")
+    sink.emit("a0002", "tool_call", tool="recon.probe", args={"surface": "/x"})
+    lines = [json.loads(l) for l in path.read_text().splitlines()]
+    assert lines[0] == {"seq": 1, "agent_id": "a0001", "type": "assistant", "text": "hello"}
+    assert lines[1]["args"] == {"surface": "/x"}
+    assert len(sink.events) == 2
+
+
+def test_dynamic_engine_without_planner_is_deterministic():
+    """No planner (static mode) → no plan events, no rationale, same result."""
+    e = DynamicEngine()  # planner=None
+    kb = KnowledgeBase()
+    report = e.run("", kb, _router_for([e]), AegisConfig())
+    assert {f.id for f in kb.accepted} == {"D1", "D2", "D3"}
+    assert not any(ev["kind"] == "plan" for ev in e.graph[0].trajectory)
+    assert all(f.rationale is None for f in kb.accepted)
+
 
 def test_dynamic_engine_terminates_under_budget():
     e = DynamicEngine(max_steps=4)  # tiny budget

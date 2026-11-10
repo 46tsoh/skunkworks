@@ -44,18 +44,33 @@ with no images pulled. Pull images to run tools live: `./docker/pull-images.sh`
 
 ## Models
 
-Aegis uses models two ways — the same split Strix draws between its LLM and its
-logic:
+Aegis splits a run the way Strix does — *the LLM writes & plans, the decision
+model decides, code acts*:
 
 - A **standard generative LLM** (`aegis.llm`) — OpenAI-compatible, **local-first**
-  (defaults to a localhost server like Ollama / llama.cpp / vLLM). Configure with
-  `AEGIS_LLM`, `AEGIS_LLM_API_BASE`, `AEGIS_LLM_API_KEY`.
-- The **typed decision layer** (`aegis.decision`) — `choose` / `score` / `boolean`
-  with a probability, the triage/validate/dedup oracle.
+  (Ollama / llama.cpp / vLLM, or a LiteLLM gateway). It plans the next action and
+  writes the finding rationale. Configure with `AEGIS_LLM`, `AEGIS_LLM_API_BASE`,
+  `AEGIS_LLM_API_KEY`.
+- A **typed decision model** (`aegis.decision`) — `choose` / `score` / `boolean`
+  with a probability: the triage/validate/dedup oracle. **Jev** (TypeSafe's typed
+  `/v1/decisions` API) is the native fit; it is used *only alongside* an LLM.
 
-A standard LLM can also *be* the decision backend (`--backend llm`). Everything
-defaults to offline/localhost; the remote `jev` backend and non-localhost LLM
-endpoints are refused unless egress is explicitly enabled.
+### Modes
+
+Pick a mode; the decision model is never used alone:
+
+```bash
+aegis run --mode full-llm      --allow-egress   # one LLM plans AND decides
+aegis run --mode llm+decision  --allow-egress   # LLM plans/writes, Jev decides
+aegis run --mode static                         # fully offline/deterministic (tests, CI)
+```
+
+In both real modes a generative LLM is always in the loop (planning each step,
+authoring rationale — visible in the dashboard's agent timeline). `--mode
+llm+decision` routes the typed decisions to the decision model (`--decision-model
+jev|basal`). `--backend {static,basal,jev,llm}` remains as the low-level decider
+knob. Everything defaults to offline/localhost; remote deciders and non-localhost
+LLM endpoints are refused unless `--allow-egress`.
 
 ## Package layout
 
@@ -105,7 +120,9 @@ cd ui && npm install && npm run dev # http://localhost:5173
 
 Views: Overview (KPIs, severity donut, OWASP, per-engine rollup), Findings
 explorer (filter/sort + a detail drawer with the CVSS vector, the 8-stage
-exploitability chain, evidence and the per-finding decision trail), Agent graph,
+exploitability chain, evidence and the per-finding decision trail), an
+interactive Agent graph (select an agent for its trajectory, an inter-agent
+message transcript, and an interleaved run timeline),
 Hypotheses queue, the full **decision audit trail**, and the Tools catalog. See
 [`ui/README.md`](ui/README.md).
 

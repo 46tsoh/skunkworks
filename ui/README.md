@@ -25,7 +25,11 @@ It reads `ui/public/data/report.json` and `decisions.jsonl`. Re-run `aegis run
 - **Findings** — filter/sort by severity, CVSS, OWASP, engine, exploitable;
   a detail drawer with the parsed CVSS vector, the 8-stage exploitability
   chain, evidence, and the decision trail for that finding.
-- **Agent graph** — the dynamic engine's graph of agents.
+- **Agent graph** — the dynamic engine's graph of agents, interactive: select
+  any agent to inspect its step-by-step **trajectory**, read the inter-agent
+  **message transcript** (the coordinator delegates, each sub-agent reports
+  back), and follow one interleaved **run timeline** across all agents. Every
+  event is derived from the real control flow, not fabricated.
 - **Hypotheses** — the static engine's priority-ordered hypothesis queue and
   coverage ledger.
 - **Decisions** — the full, replayable decision audit trail (every router

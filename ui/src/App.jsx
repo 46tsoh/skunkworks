@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useAegisData, deriveModel } from "./lib/data.js";
 import { cx } from "./lib/ui.jsx";
+import { NAV_ICONS, IconShield } from "./lib/icons.jsx";
 import Overview from "./views/Overview.jsx";
 import Findings from "./views/Findings.jsx";
 import Agents from "./views/Agents.jsx";
@@ -9,12 +10,12 @@ import Decisions from "./views/Decisions.jsx";
 import Tools from "./views/Tools.jsx";
 
 const NAV = [
-  ["overview", "Overview", "▤"],
-  ["findings", "Findings", "◈"],
-  ["agents", "Agent graph", "◆"],
-  ["hypotheses", "Hypotheses", "▣"],
-  ["decisions", "Decisions", "≡"],
-  ["tools", "Tools", "⚙"],
+  ["overview", "Overview"],
+  ["findings", "Findings"],
+  ["agents", "Agent graph"],
+  ["hypotheses", "Hypotheses"],
+  ["decisions", "Decisions"],
+  ["tools", "Tools"],
 ];
 
 export default function App() {
@@ -32,22 +33,31 @@ export default function App() {
       <aside className="sticky top-0 hidden h-screen w-56 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)]/70 px-3 py-4 backdrop-blur md:flex">
         <div className="flex items-center gap-2 px-2 pb-5">
           <span className="grid h-8 w-8 place-items-center rounded-lg text-[var(--color-accent-ink)]"
-                style={{ background: "var(--color-accent)" }}>▲</span>
+                style={{ background: "var(--color-accent)" }}>
+            <IconShield size={18} />
+          </span>
           <div>
             <div className="text-[15px] font-semibold leading-none">Aegis</div>
             <div className="text-[11px] text-[var(--color-faint)]">security dashboard</div>
           </div>
         </div>
         <nav className="flex flex-col gap-0.5">
-          {NAV.map(([id, label, icon]) => (
-            <button key={id} onClick={() => setTab(id)}
-              className={cx("tap flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[14px]",
-                tab === id ? "bg-[var(--color-surface-2)] text-[var(--color-ink)]"
-                           : "text-[var(--color-muted)] hover:bg-[var(--color-surface-2)]/50")}>
-              <span className="w-4 text-center text-[var(--color-faint)]" aria-hidden>{icon}</span>
-              {label}
-            </button>
-          ))}
+          {NAV.map(([id, label]) => {
+            const Icon = NAV_ICONS[id];
+            const active = tab === id;
+            return (
+              <button key={id} onClick={() => setTab(id)}
+                className={cx("tap flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[14px]",
+                  active ? "bg-[var(--color-surface-2)] text-[var(--color-ink)]"
+                         : "text-[var(--color-muted)] hover:bg-[var(--color-surface-2)]/50")}>
+                <span className="grid h-4 w-4 place-items-center"
+                      style={{ color: active ? "var(--color-accent)" : "var(--color-faint)" }}>
+                  <Icon size={16} />
+                </span>
+                {label}
+              </button>
+            );
+          })}
         </nav>
         <div className="mt-auto px-2 text-[11px] leading-relaxed text-[var(--color-faint)]">
           local-only · no telemetry
@@ -66,9 +76,9 @@ export default function App() {
               <span className="hidden sm:inline">· backend {model.run.backend}</span>
               {model.metrics.degraded
                 ? <span className="rounded-full px-2 py-0.5 font-medium"
-                        style={{ color: "var(--color-sev-high)", background: "var(--color-sev-high)18" }}>degraded</span>
+                        style={{ color: "var(--color-sev-high)", background: "color-mix(in oklab, var(--color-sev-high) 15%, transparent)" }}>degraded</span>
                 : <span className="rounded-full px-2 py-0.5 font-medium"
-                        style={{ color: "var(--color-ok)", background: "var(--color-ok)18" }}>complete</span>}
+                        style={{ color: "var(--color-ok)", background: "color-mix(in oklab, var(--color-ok) 15%, transparent)" }}>complete</span>}
             </div>
           )}
         </header>

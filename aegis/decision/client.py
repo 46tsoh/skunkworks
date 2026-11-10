@@ -100,16 +100,29 @@ class DecisionError(RuntimeError):
 # --------------------------------------------------------------------------- #
 # JevBackend — the one place that knows TypeSafe's wire format
 # --------------------------------------------------------------------------- #
-# The exact request/response JSON field names for the Jev API could not be
-# verified from vendor docs in this environment. They are isolated here as
-# constants so pinning them to the real API is a single-file edit. Update these
-# (and the two small builder/parser helpers) once the real schema is confirmed.
+# TypeSafe's Jev decision API (and a LiteLLM gateway proxying it) exposes ONE
+# typed-decision endpoint, ``POST {base}/decisions``:
+#
+#   request : {"model", "input": <text judged>, "questions": [ <question> ]}
+#   question: {"type": "predicate"|"choice"|"score", "instructions", ...}
+#             choice adds "choices": [{"value": <str|bool>, "description"?}]
+#             score  adds "levels":  [<label>, ...]  (lowest → highest)
+#   response: {"answers": [ <answer> ], ...}   (answers echo question order)
+#             predicate → {"probability"}
+#             choice    → {"choice", "probabilities", "confidence"}
+#             score     → {"score": <level index>, "probabilities", "confidence"}
+#             refusal   → {"type": "refusal"}   (model declined)
+#
+# Verified against a live gateway's OpenAPI schema. Jev is a *typed-decision*
+# model, not a chat model, so it is NOT reachable via /chat/completions.
 _JEV_DEFAULT_BASE = "https://api.typesafe.ai/v1"
-_JEV_CHOOSE_PATH = "/decisions/choose"
-_JEV_SCORE_PATH = "/decisions/score"
-_JEV_BOOLEAN_PATH = "/decisions/boolean"
+_JEV_DECISIONS_PATH = "/decisions"
 
-# Response field names (adjust to match the real API).
+# How many discrete levels a continuous score() is quantised into for Jev.
+# The API caps `levels` at 10 (minItems 2, maxItems 10).
+_JEV_SCORE_LEVELS = 10
+
+# Response field names shared by the BasalOmni self-hosted backend below.
 _RESP_CHOICE_INDEX = "choice_index"
 _RESP_PROBABILITY = "probability"
 _RESP_SCORE_VALUE = "value"
@@ -145,14 +158,19 @@ class JevBackend:
     def configured(self) -> bool:
         return bool(self.api_key)
 
-    def _post(self, path: str, payload: dict) -> tuple[dict, float]:
+    def _decide(self, input_text: str, question: dict) -> tuple[dict, float, dict]:
+        """POST one typed-decision question; return (answer, ms, full_response).
+
+        Raises ``DecisionError`` when the key is missing, the request fails, or
+        the model refuses — so the caller's fallback backend takes over.
+        """
         if not self.configured:
             raise DecisionError("JEV_API_KEY is not set")
-        body = json.dumps({"model": self.model, **payload}).encode("utf-8")
+        body = json.dumps({
+            "model": self.model, "input": input_text, "questions": [question],
+        }).encode("utf-8")
         req = urllib.request.Request(
-            self.api_base + path,
-            data=body,
-            method="POST",
+            self.api_base + _JEV_DECISIONS_PATH, data=body, method="POST",
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
@@ -164,21 +182,30 @@ class JevBackend:
                 data = json.loads(resp.read().decode("utf-8"))
         except (urllib.error.URLError, TimeoutError, ValueError) as exc:
             raise DecisionError(f"jev request failed: {exc}") from exc
-        return data, (time.perf_counter() - start) * 1000.0
+        ms = (time.perf_counter() - start) * 1000.0
+        answers = data.get("answers") or []
+        if not answers:
+            raise DecisionError("jev decisions returned no answers")
+        answer = answers[0]
+        if answer.get("type") == "refusal":
+            raise DecisionError("jev model refused the decision")
+        return answer, ms, data
 
     def choose(self, prompt: str, options: Sequence[str]) -> ChoiceResult:
         opts = list(options)
         if not opts:
             raise DecisionError("choose() requires at least one option")
-        data, ms = self._post(
-            _JEV_CHOOSE_PATH, {"prompt": prompt, "options": opts}
-        )
-        idx = int(data.get(_RESP_CHOICE_INDEX, 0))
-        idx = max(0, min(idx, len(opts) - 1))
+        answer, ms, data = self._decide(prompt, {
+            "type": "choice",
+            "instructions": "Select the single best option for the situation.",
+            "choices": [{"value": o} for o in opts],
+        })
+        chosen = answer.get("choice")
+        idx = opts.index(chosen) if chosen in opts else 0
         return ChoiceResult(
             index=idx,
             option=opts[idx],
-            probability=float(data.get(_RESP_PROBABILITY, 0.0)),
+            probability=float(answer.get("confidence", 0.0)),
             backend=self.name,
             latency_ms=ms,
             raw=data,
@@ -187,12 +214,21 @@ class JevBackend:
     def score(
         self, prompt: str, scale_min: float, scale_max: float
     ) -> ScoreResult:
-        data, ms = self._post(
-            _JEV_SCORE_PATH,
-            {"prompt": prompt, "scale_min": scale_min, "scale_max": scale_max},
-        )
-        value = float(data.get(_RESP_SCORE_VALUE, scale_min))
-        value = max(scale_min, min(value, scale_max))
+        # Jev scores against discrete levels and returns the level index; build
+        # a linear ladder across the range and map the index back to a value.
+        n = _JEV_SCORE_LEVELS
+        span = scale_max - scale_min
+        levels = [{"label": str(round(scale_min + i * span / (n - 1), 4))}
+                  for i in range(n)]
+        answer, ms, data = self._decide(prompt, {
+            "type": "score",
+            "instructions": "Score the item described on the given scale.",
+            "levels": levels,
+        })
+        # Jev returns a fractional level index (probability-weighted); keep the
+        # fraction and interpolate across the range rather than truncating.
+        lvl = max(0.0, min(float(answer.get("score", 0)), float(n - 1)))
+        value = scale_min + lvl * span / (n - 1)
         return ScoreResult(
             value=value,
             scale_min=scale_min,
@@ -203,9 +239,12 @@ class JevBackend:
         )
 
     def boolean(self, statement: str) -> BooleanResult:
-        data, ms = self._post(_JEV_BOOLEAN_PATH, {"statement": statement})
+        answer, ms, data = self._decide(statement, {
+            "type": "predicate",
+            "instructions": "Is this statement true?",
+        })
         return BooleanResult(
-            probability=float(data.get(_RESP_PROBABILITY, 0.0)),
+            probability=float(answer.get("probability", 0.0)),
             backend=self.name,
             latency_ms=ms,
             raw=data,

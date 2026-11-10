@@ -1,0 +1,95 @@
+{"seq": 1, "agent_id": "a0001", "type": "spawn", "role": "coordinator", "task": "drive the test", "parent_id": null}
+{"seq": 2, "agent_id": "a0001", "type": "status", "status": "running"}
+{"seq": 3, "agent_id": "a0002", "type": "spawn", "role": "recon", "task": "map surfaces", "parent_id": "a0001"}
+{"seq": 4, "agent_id": "a0001", "type": "message", "to": "a0002", "text": "You are recon: map surfaces."}
+{"seq": 5, "agent_id": "a0003", "type": "spawn", "role": "exploitation", "task": "confirm leads", "parent_id": "a0001"}
+{"seq": 6, "agent_id": "a0001", "type": "message", "to": "a0003", "text": "You are exploitation: confirm leads."}
+{"seq": 7, "agent_id": "a0001", "type": "assistant", "text": "Coordinator: mapping the next attack surface."}
+{"seq": 8, "agent_id": "a0001", "type": "think", "text": "state \u2014 You are the coordinator agent driving a defensive security test of an authorized target. Choose the next action. Keep probing every attack surface and triaging every pending lead; only choose 'finish' once there are no surfaces left to probe and no leads pending. Current state: 4 attack surface(s) not yet probed, 0 lead(s) pending triage, 0 finding(s) confirmed so far."}
+{"seq": 9, "agent_id": "a0001", "type": "decision", "kind": "route_next_action", "outcome": "probe:POST /login (username)", "probability": 1.0, "backend": "hint"}
+{"seq": 10, "agent_id": "a0001", "type": "message", "to": "a0002", "text": "Map POST /login (username)."}
+{"seq": 11, "agent_id": "a0002", "type": "tool_call", "tool": "recon.probe", "args": {"surface": "POST /login (username)"}}
+{"seq": 12, "agent_id": "a0002", "type": "tool_output", "tool": "recon.probe", "status": "ok", "summary": "surfaced 1 lead(s): SQL injection in login handler", "count": 1}
+{"seq": 13, "agent_id": "a0001", "type": "assistant", "text": "Coordinator: mapping the next attack surface."}
+{"seq": 14, "agent_id": "a0001", "type": "think", "text": "state \u2014 You are the coordinator agent driving a defensive security test of an authorized target. Choose the next action. Keep probing every attack surface and triaging every pending lead; only choose 'finish' once there are no surfaces left to probe and no leads pending. Current state: 3 attack surface(s) not yet probed, 1 lead(s) pending triage, 0 finding(s) confirmed so far."}
+{"seq": 15, "agent_id": "a0001", "type": "decision", "kind": "route_next_action", "outcome": "probe:GET /search (q)", "probability": 1.0, "backend": "hint"}
+{"seq": 16, "agent_id": "a0001", "type": "message", "to": "a0002", "text": "Map GET /search (q)."}
+{"seq": 17, "agent_id": "a0002", "type": "tool_call", "tool": "recon.probe", "args": {"surface": "GET /search (q)"}}
+{"seq": 18, "agent_id": "a0002", "type": "tool_output", "tool": "recon.probe", "status": "ok", "summary": "surfaced 1 lead(s): Reflected XSS in search results", "count": 1}
+{"seq": 19, "agent_id": "a0001", "type": "assistant", "text": "Coordinator: mapping the next attack surface."}
+{"seq": 20, "agent_id": "a0001", "type": "think", "text": "state \u2014 You are the coordinator agent driving a defensive security test of an authorized target. Choose the next action. Keep probing every attack surface and triaging every pending lead; only choose 'finish' once there are no surfaces left to probe and no leads pending. Current state: 2 attack surface(s) not yet probed, 2 lead(s) pending triage, 0 finding(s) confirmed so far."}
+{"seq": 21, "agent_id": "a0001", "type": "decision", "kind": "route_next_action", "outcome": "probe:POST /webhooks (callback_url)", "probability": 1.0, "backend": "hint"}
+{"seq": 22, "agent_id": "a0001", "type": "message", "to": "a0002", "text": "Map POST /webhooks (callback_url)."}
+{"seq": 23, "agent_id": "a0002", "type": "tool_call", "tool": "recon.probe", "args": {"surface": "POST /webhooks (callback_url)"}}
+{"seq": 24, "agent_id": "a0002", "type": "tool_output", "tool": "recon.probe", "status": "ok", "summary": "surfaced 1 lead(s): SSRF in webhook URL fetch", "count": 1}
+{"seq": 25, "agent_id": "a0001", "type": "assistant", "text": "Coordinator: mapping the next attack surface."}
+{"seq": 26, "agent_id": "a0001", "type": "think", "text": "state \u2014 You are the coordinator agent driving a defensive security test of an authorized target. Choose the next action. Keep probing every attack surface and triaging every pending lead; only choose 'finish' once there are no surfaces left to probe and no leads pending. Current state: 1 attack surface(s) not yet probed, 3 lead(s) pending triage, 0 finding(s) confirmed so far."}
+{"seq": 27, "agent_id": "a0001", "type": "decision", "kind": "route_next_action", "outcome": "probe:GET /app (500 page)", "probability": 1.0, "backend": "hint"}
+{"seq": 28, "agent_id": "a0001", "type": "message", "to": "a0002", "text": "Map GET /app (500 page)."}
+{"seq": 29, "agent_id": "a0002", "type": "tool_call", "tool": "recon.probe", "args": {"surface": "GET /app (500 page)"}}
+{"seq": 30, "agent_id": "a0002", "type": "tool_output", "tool": "recon.probe", "status": "ok", "summary": "surfaced 1 lead(s): Verbose stack trace on error page", "count": 1}
+{"seq": 31, "agent_id": "a0001", "type": "assistant", "text": "Coordinator: triaging the next lead."}
+{"seq": 32, "agent_id": "a0001", "type": "think", "text": "state \u2014 You are the coordinator agent driving a defensive security test of an authorized target. Choose the next action. Keep probing every attack surface and triaging every pending lead; only choose 'finish' once there are no surfaces left to probe and no leads pending. Current state: 0 attack surface(s) not yet probed, 4 lead(s) pending triage, 0 finding(s) confirmed so far."}
+{"seq": 33, "agent_id": "a0001", "type": "decision", "kind": "route_next_action", "outcome": "triage:D1", "probability": 1.0, "backend": "hint"}
+{"seq": 34, "agent_id": "a0001", "type": "message", "to": "a0003", "text": "Confirm the lead: SQL injection in login handler."}
+{"seq": 35, "agent_id": "a0003", "type": "assistant", "text": "Exploitation: triaging the next lead."}
+{"seq": 36, "agent_id": "a0003", "type": "think", "text": "state \u2014 evaluating SQL injection in login handler (POST /login (username))"}
+{"seq": 37, "agent_id": "a0003", "type": "decision", "kind": "triage.true_positive", "outcome": "true_positive"}
+{"seq": 38, "agent_id": "a0003", "type": "finding", "id": "D1", "title": "SQL injection in login handler", "severity": "Critical", "exploitable": true}
+{"seq": 39, "agent_id": "a0003", "type": "message", "to": "a0001", "text": "Filed D1: SQL injection in login handler (Critical)."}
+{"seq": 40, "agent_id": "a0001", "type": "message", "to": "a0004", "text": "Spin up and develop a PoC for D1."}
+{"seq": 41, "agent_id": "a0004", "type": "spawn", "role": "post_exploitation", "task": "develop PoC for SQL injection in login handler", "parent_id": "a0001"}
+{"seq": 42, "agent_id": "a0004", "type": "status", "status": "running"}
+{"seq": 43, "agent_id": "a0004", "type": "assistant", "text": "Post_exploitation: no work left; finishing."}
+{"seq": 44, "agent_id": "a0004", "type": "think", "text": "state \u2014 developing a PoC for SQL injection in login handler"}
+{"seq": 45, "agent_id": "a0004", "type": "message", "to": "a0001", "text": "PoC drafted for D1."}
+{"seq": 46, "agent_id": "a0004", "type": "finish", "summary": "PoC ready for D1"}
+{"seq": 47, "agent_id": "a0001", "type": "assistant", "text": "Coordinator: triaging the next lead."}
+{"seq": 48, "agent_id": "a0001", "type": "think", "text": "state \u2014 You are the coordinator agent driving a defensive security test of an authorized target. Choose the next action. Keep probing every attack surface and triaging every pending lead; only choose 'finish' once there are no surfaces left to probe and no leads pending. Current state: 0 attack surface(s) not yet probed, 3 lead(s) pending triage, 1 finding(s) confirmed so far."}
+{"seq": 49, "agent_id": "a0001", "type": "decision", "kind": "route_next_action", "outcome": "triage:D2", "probability": 1.0, "backend": "hint"}
+{"seq": 50, "agent_id": "a0001", "type": "message", "to": "a0003", "text": "Confirm the lead: Reflected XSS in search results."}
+{"seq": 51, "agent_id": "a0003", "type": "assistant", "text": "Exploitation: triaging the next lead."}
+{"seq": 52, "agent_id": "a0003", "type": "think", "text": "state \u2014 evaluating Reflected XSS in search results (GET /search (q))"}
+{"seq": 53, "agent_id": "a0003", "type": "decision", "kind": "triage.true_positive", "outcome": "true_positive"}
+{"seq": 54, "agent_id": "a0003", "type": "finding", "id": "D2", "title": "Reflected XSS in search results", "severity": "Medium", "exploitable": true}
+{"seq": 55, "agent_id": "a0003", "type": "message", "to": "a0001", "text": "Filed D2: Reflected XSS in search results (Medium)."}
+{"seq": 56, "agent_id": "a0001", "type": "message", "to": "a0005", "text": "Spin up and develop a PoC for D2."}
+{"seq": 57, "agent_id": "a0005", "type": "spawn", "role": "post_exploitation", "task": "develop PoC for Reflected XSS in search results", "parent_id": "a0001"}
+{"seq": 58, "agent_id": "a0005", "type": "status", "status": "running"}
+{"seq": 59, "agent_id": "a0005", "type": "assistant", "text": "Post_exploitation: no work left; finishing."}
+{"seq": 60, "agent_id": "a0005", "type": "think", "text": "state \u2014 developing a PoC for Reflected XSS in search results"}
+{"seq": 61, "agent_id": "a0005", "type": "message", "to": "a0001", "text": "PoC drafted for D2."}
+{"seq": 62, "agent_id": "a0005", "type": "finish", "summary": "PoC ready for D2"}
+{"seq": 63, "agent_id": "a0001", "type": "assistant", "text": "Coordinator: triaging the next lead."}
+{"seq": 64, "agent_id": "a0001", "type": "think", "text": "state \u2014 You are the coordinator agent driving a defensive security test of an authorized target. Choose the next action. Keep probing every attack surface and triaging every pending lead; only choose 'finish' once there are no surfaces left to probe and no leads pending. Current state: 0 attack surface(s) not yet probed, 2 lead(s) pending triage, 2 finding(s) confirmed so far."}
+{"seq": 65, "agent_id": "a0001", "type": "decision", "kind": "route_next_action", "outcome": "triage:D3", "probability": 1.0, "backend": "hint"}
+{"seq": 66, "agent_id": "a0001", "type": "message", "to": "a0003", "text": "Confirm the lead: SSRF in webhook URL fetch."}
+{"seq": 67, "agent_id": "a0003", "type": "assistant", "text": "Exploitation: triaging the next lead."}
+{"seq": 68, "agent_id": "a0003", "type": "think", "text": "state \u2014 evaluating SSRF in webhook URL fetch (POST /webhooks (callback_url))"}
+{"seq": 69, "agent_id": "a0003", "type": "decision", "kind": "triage.true_positive", "outcome": "true_positive"}
+{"seq": 70, "agent_id": "a0003", "type": "finding", "id": "D3", "title": "SSRF in webhook URL fetch", "severity": "High", "exploitable": true}
+{"seq": 71, "agent_id": "a0003", "type": "message", "to": "a0001", "text": "Filed D3: SSRF in webhook URL fetch (High)."}
+{"seq": 72, "agent_id": "a0001", "type": "message", "to": "a0006", "text": "Spin up and develop a PoC for D3."}
+{"seq": 73, "agent_id": "a0006", "type": "spawn", "role": "post_exploitation", "task": "develop PoC for SSRF in webhook URL fetch", "parent_id": "a0001"}
+{"seq": 74, "agent_id": "a0006", "type": "status", "status": "running"}
+{"seq": 75, "agent_id": "a0006", "type": "assistant", "text": "Post_exploitation: no work left; finishing."}
+{"seq": 76, "agent_id": "a0006", "type": "think", "text": "state \u2014 developing a PoC for SSRF in webhook URL fetch"}
+{"seq": 77, "agent_id": "a0006", "type": "message", "to": "a0001", "text": "PoC drafted for D3."}
+{"seq": 78, "agent_id": "a0006", "type": "finish", "summary": "PoC ready for D3"}
+{"seq": 79, "agent_id": "a0001", "type": "assistant", "text": "Coordinator: triaging the next lead."}
+{"seq": 80, "agent_id": "a0001", "type": "think", "text": "state \u2014 You are the coordinator agent driving a defensive security test of an authorized target. Choose the next action. Keep probing every attack surface and triaging every pending lead; only choose 'finish' once there are no surfaces left to probe and no leads pending. Current state: 0 attack surface(s) not yet probed, 1 lead(s) pending triage, 3 finding(s) confirmed so far."}
+{"seq": 81, "agent_id": "a0001", "type": "decision", "kind": "route_next_action", "outcome": "triage:D4", "probability": 1.0, "backend": "hint"}
+{"seq": 82, "agent_id": "a0001", "type": "message", "to": "a0003", "text": "Confirm the lead: Verbose stack trace on error page."}
+{"seq": 83, "agent_id": "a0003", "type": "assistant", "text": "Exploitation: triaging the next lead."}
+{"seq": 84, "agent_id": "a0003", "type": "think", "text": "state \u2014 evaluating Verbose stack trace on error page (GET /app (500 page))"}
+{"seq": 85, "agent_id": "a0003", "type": "decision", "kind": "triage.true_positive", "outcome": "false_positive"}
+{"seq": 86, "agent_id": "a0001", "type": "assistant", "text": "Coordinator: no work left; finishing."}
+{"seq": 87, "agent_id": "a0001", "type": "think", "text": "state \u2014 You are the coordinator agent driving a defensive security test of an authorized target. Choose the next action. Keep probing every attack surface and triaging every pending lead; only choose 'finish' once there are no surfaces left to probe and no leads pending. Current state: 0 attack surface(s) not yet probed, 0 lead(s) pending triage, 3 finding(s) confirmed so far."}
+{"seq": 88, "agent_id": "a0001", "type": "decision", "kind": "route_next_action", "outcome": "finish", "probability": 1.0, "backend": "hint"}
+{"seq": 89, "agent_id": "a0001", "type": "finish", "summary": "3 finding(s) confirmed"}
+{"seq": 90, "agent_id": "a0001", "type": "status", "status": "completed"}
+{"seq": 91, "agent_id": "a0002", "type": "status", "status": "completed"}
+{"seq": 92, "agent_id": "a0003", "type": "status", "status": "completed"}
+{"seq": 93, "agent_id": "a0004", "type": "status", "status": "completed"}
+{"seq": 94, "agent_id": "a0005", "type": "status", "status": "completed"}
+{"seq": 95, "agent_id": "a0006", "type": "status", "status": "completed"}

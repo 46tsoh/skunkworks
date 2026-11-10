@@ -70,6 +70,14 @@ class AgentNode:
     skills: list[str] = []        # advisory skill names (tool selection in M3)
     steps_spent: int = 0
     created_step: int = 0
+    trajectory: list[dict] = []   # ordered record of what the agent did, step
+                                  # by step: {seq, kind, label, detail, tone}.
+                                  # Serialised into the report so the dashboard
+                                  # can show each agent's timeline, an
+                                  # inter-agent message transcript (coordinator
+                                  # delegates → sub-agent reports back), and one
+                                  # interleaved run timeline. Derived purely from
+                                  # the real control flow, never fabricated.
 
 @dataclass
 class Observation:                # a recon fact / lead on the blackboard

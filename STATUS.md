@@ -5,6 +5,26 @@ iteration. **Operating constraint: local-only** — nothing is hosted or sent to
 a third-party service; all decision backends are offline (`static`) or
 localhost (`basal`), and the UI runs on a local dev server.
 
+## Operating modes (LLM + decision model)
+
+Aegis runs the split *the LLM writes & plans, the decision model decides, code
+acts*. Pick a **mode** (`aegis run --mode …`); the decision model is never used
+alone:
+
+- **full-llm** — one LLM (e.g. Claude via a local/LiteLLM endpoint) both plans
+  each step and makes the typed decisions.
+- **llm+decision** — the LLM plans the next action and writes the finding
+  rationale; a **decision model** (Jev's typed `/v1/decisions` API, or `basal`)
+  makes the typed `choose`/`score`/`boolean` calls.
+- **static** — fully offline/deterministic (tests, CI, no network).
+
+The generative planner lives in the dynamic (graph-of-agents) engine: each step
+it proposes the next action + reasoning (shown in the dashboard's agent timeline)
+and the decider commits it. Verified live against a LiteLLM gateway: `full-llm`
+(86 `llm-judge` decisions) and `llm+decision` (91 `jev` decisions, Claude
+planning + authoring), both producing the same 5 ranked findings as the offline
+deterministic run. Remote endpoints require `--allow-egress`.
+
 ## Honest scope note
 
 Full, un-stubbed parity with *both* Strix and RAPTOR (HTTP proxy, browser

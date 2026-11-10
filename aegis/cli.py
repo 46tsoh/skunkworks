@@ -116,9 +116,14 @@ def _cmd_run(args: argparse.Namespace) -> int:
     from aegis.engines.base import RunConfig
 
     log_path = (args.out / "decisions.jsonl") if args.out else None
-    aegis_cfg = AegisConfig.from_env(
-        backend=args.backend, local_only=not args.allow_egress, log_path=log_path,
+    cfg_kwargs = dict(
+        backend=args.backend,
+        decision_model=getattr(args, "decision_model", "jev"),
+        local_only=not args.allow_egress, log_path=log_path,
     )
+    if args.mode is not None:  # don't clobber AEGIS_MODE env with the None default
+        cfg_kwargs["mode"] = args.mode
+    aegis_cfg = AegisConfig.from_env(**cfg_kwargs)
     config = RunConfig(
         target=str(args.target), aegis=aegis_cfg,
         parallel=not args.serial, out_dir=args.out, run_id=args.run_id,
@@ -187,9 +192,14 @@ def _cmd_dashboard(args: argparse.Namespace) -> int:
     if args.use_tools:
         from aegis.tools import default_registry
         registry = default_registry()
-    aegis_cfg = AegisConfig.from_env(
-        backend=args.backend, local_only=not args.allow_egress,
+    dash_kwargs = dict(
+        backend=args.backend,
+        decision_model=getattr(args, "decision_model", "jev"),
+        local_only=not args.allow_egress,
         log_path=data_dir / "decisions.jsonl")
+    if getattr(args, "mode", None) is not None:
+        dash_kwargs["mode"] = args.mode
+    aegis_cfg = AegisConfig.from_env(**dash_kwargs)
     config = RunConfig(target=str(args.target), aegis=aegis_cfg,
                        parallel=not args.serial, out_dir=data_dir,
                        run_id=args.run_id)
@@ -241,8 +251,19 @@ def build_parser() -> argparse.ArgumentParser:
         "run", help="run BOTH engines over the sample target (unified report)")
     run_p.add_argument("--target", type=Path, default=_DEFAULT_TARGET,
                        help="local sample-target directory")
+    run_p.add_argument("--mode",
+                       choices=["full-llm", "llm+decision", "static"],
+                       default=None,
+                       help="operating mode: full-llm (one LLM plans+decides) | "
+                            "llm+decision (LLM plans, decision model decides) | "
+                            "static (offline). Overrides --backend when set.")
     run_p.add_argument("--backend", choices=["static", "basal", "jev", "llm"],
-                       default="static", help="decision backend (default: static)")
+                       default="static",
+                       help="low-level decider (default: static; --mode is "
+                            "preferred for real runs)")
+    run_p.add_argument("--decision-model", choices=["jev", "basal"],
+                       default="jev",
+                       help="decision model for llm+decision mode (default: jev)")
     run_p.add_argument("--allow-egress", action="store_true",
                        help="permit remote backends (off by default)")
     run_p.add_argument("--serial", action="store_true",
@@ -275,6 +296,11 @@ def build_parser() -> argparse.ArgumentParser:
         "dashboard",
         help="run both engines over the sample target and open the dashboard")
     dash.add_argument("--target", type=Path, default=_DEFAULT_TARGET)
+    dash.add_argument("--mode",
+                      choices=["full-llm", "llm+decision", "static"],
+                      default=None, help="operating mode (overrides --backend)")
+    dash.add_argument("--decision-model", choices=["jev", "basal"],
+                      default="jev")
     dash.add_argument("--backend", choices=["static", "basal", "jev", "llm"],
                       default="static")
     dash.add_argument("--use-tools", action="store_true",

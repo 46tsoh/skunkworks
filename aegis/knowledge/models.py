@@ -102,6 +102,7 @@ class Finding:
     exploitable: bool
     stages_passed: int
     failed_stage: Optional[str] = None
+    rationale: Optional[str] = None  # LLM-authored explanation (generative modes)
 
     @property
     def id(self) -> str:
@@ -135,6 +136,7 @@ class Finding:
             "failed_stage": self.failed_stage,
             "source_engine": self.candidate.source_engine,
             "evidence": list(self.candidate.evidence),
+            "rationale": self.rationale,
         }
 
 
