@@ -78,7 +78,15 @@ def _host_of(target: str) -> str:
         return _canon_host(urlparse(t).hostname or "")
     # Bare host[:port]. Bracketed IPv6 (``[::1]`` / ``[::1]:80``) vs host:port.
     if t.startswith("["):
-        return _canon_host(t[1:].split("]", 1)[0])  # inside the brackets
+        inner, sep, rest = t[1:].partition("]")
+        if not sep:
+            return ""  # no closing bracket → malformed
+        if rest and not (rest.startswith(":") and rest[1:].isdigit()):
+            return ""  # junk after ']' that is not a :port → refuse
+        ip = _as_ip(inner)
+        if ip is None or ip.version != 6:
+            return ""  # brackets must contain an IPv6 literal
+        return _canon_host(inner)
     if t.count(":") == 1:  # exactly one colon ⇒ host:port (IPv6 has several)
         t = t.split(":", 1)[0]
     return _canon_host(t)
@@ -113,14 +121,22 @@ def _eff_port(parsed) -> Optional[int]:
     return _DEFAULT_PORTS.get((parsed.scheme or "").lower())
 
 
-def _norm_path(path: str) -> List[str]:
-    """Percent-decode unreserved chars and resolve dot-segments to a seg list.
+def _norm_path(path: str):
+    """Decode once and resolve dot-segments to a segment list, or None if the
+    path is ambiguous (a parser differential a server might read differently).
 
-    Returns path segments (no empties), so a prefix check is segment-wise and a
-    target cannot escape a prefix with ``..`` or sneak past it with ``%2e``.
+    Refuses: a backslash (may be read as '/'), a residual '%' after one decode
+    (double-encoding like ``%252e``), a ';' path parameter, and any segment that
+    starts with ``..`` (so ``..``, ``...`` and ``..%00`` can't sneak past).
+    Returns segments (no empties) otherwise, so the prefix check is segment-wise.
     """
     from urllib.parse import unquote
-    decoded = unquote(path or "")
+    raw = path or ""
+    if "\\" in raw:
+        return None
+    decoded = unquote(raw)
+    if "%" in decoded or ";" in decoded:
+        return None  # double-encoding or a path parameter → ambiguous
     out: List[str] = []
     for seg in decoded.split("/"):
         if seg in ("", "."):
@@ -129,6 +145,8 @@ def _norm_path(path: str) -> List[str]:
             if out:
                 out.pop()
             continue
+        if seg.startswith(".."):
+            return None  # conservative: refuse ..-prefixed segments
         out.append(seg)
     return out
 
@@ -152,6 +170,8 @@ def _url_match(target: str, prefix: str) -> bool:
     if _eff_port(tu) != _eff_port(pu):
         return False
     tseg, pseg = _norm_path(tu.path), _norm_path(pu.path)
+    if tseg is None or pseg is None:  # ambiguous path → refuse
+        return False
     return tseg[:len(pseg)] == pseg
 
 
@@ -204,6 +224,13 @@ class EngagementScope:
         # URL-prefix allow (for web targets) — full parse, never substring.
         t = (target or "").strip()
         if "://" in t:
+            # Refuse an ambiguous authority up-front, whichever allow path it
+            # would take: userinfo (user@host smuggling) or a backslash (which
+            # an HTTP client may read as '/', a parser differential vs urlparse).
+            tu = urlparse(t)
+            if tu.username or tu.password or "\\" in t or tu.params:
+                return ScopeDecision(target, False,
+                                     "ambiguous URL (userinfo/backslash/path-param)")
             for prefix in self.urls:
                 if _url_match(t, prefix):
                     return ScopeDecision(target, True, f"matches url prefix {prefix!r}")
