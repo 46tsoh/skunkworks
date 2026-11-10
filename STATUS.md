@@ -22,10 +22,32 @@ action named. Nothing here is faked to look finished.
 | 1 | Core `aegis/` package (unified Finding/KnowledgeBase, DecisionRouter, config/env, CLI, tests) | **done** (merged #3) | — |
 | 2 | Orchestration core: one orchestrator, two pluggable engines (dynamic graph-of-agents + static hypothesis loop), shared KB + router | **done** | — (specs in `docs/specs/`, `aegis.engines`, `aegis run`) |
 | 3 | Tool/scanner adapters behind a common `Tool` interface (dynamic + static capabilities) | **done** | — (17 adapters, dockerized + fixtures, wired into engines) |
-| 4 | Analysis parity through the decision layer (exploitability chain + hypothesis posterior + triage/dedup/CVSS), calibrated on a labeled corpus | **partial** | pipeline + both engines route through the decision layer (M1/M2); add labeled corpus + calibration metrics tool |
+| 4 | Analysis parity through the decision layer (exploitability chain + hypothesis posterior + triage/dedup/CVSS), calibrated on a labeled corpus | **done** | — (labeled corpus + `aegis calibrate`) |
 | 5 | Unified UI (Vite + React + Tailwind) over both engines | **not started** | scaffold after M2 exposes a run/report API |
 | 6 | End-to-end interop: one command runs both engines over the sample target → one unified deduped report + dashboard | **not started** | depends on M2, M5 |
 | 7 | Docs, tests, CI (README, architecture doc, >80% core coverage, CI) | **partial** | arch map + README done; add GitHub Actions CI (user-approved) running pytest + UI build on every PR |
+
+## Milestone 4 — done
+
+- Labeled corpus `data/corpus/labeled.json` (true/false positives, exploitable
+  flags, a cross-reference duplicate) as calibration ground truth.
+- `aegis.calibration` — per decision-kind sweep of precision/recall/F1/accuracy
+  vs. ground truth, with two recommendations: **max-F1** and **recall-first**
+  (lowest threshold hitting a target recall, since a missed real vuln beats a
+  wasted review). Reuses the decision layer + the pipeline's own statements.
+- `aegis calibrate` prints per-kind metrics + recommended thresholds and can
+  write the full sweep JSON. On the corpus it finds a perfectly separating
+  operating point (recall-first: triage 0.70, posterior 0.60).
+- Tests: calibration math, separation, CLI; **238 passing**, **96%** coverage.
+
+## Security hardening (post-M3, merged #6/#7)
+
+Three automated-review findings on the M3 tools, all fixed fail-closed:
+`forensics` runs gitleaks in a read-only, no-network **container** (no host
+execution); failed tool runs surface as a **`degraded`** run with
+`tool_failures` instead of vanishing; and `DockerBackedTool` treats an
+unexpected non-zero exit or a missing target mount as `ERROR` (never a silent
+clean scan). `ok_exit_codes` lets a tool allow its findings-exit (semgrep `1`).
 
 ## Milestone 3 — done
 
