@@ -12,7 +12,7 @@
 // it as plain JSX text — never dangerouslySetInnerHTML — so a hostile byte that
 // slipped through is shown, not interpreted.
 import { useRedTeamData } from "../lib/data.js";
-import { Panel, Tag, cx } from "../lib/ui.jsx";
+import { Panel, Tag } from "../lib/ui.jsx";
 
 const GEN_CMD =
   "aegis exploit --type cmdi --target <url> --param <p> --scope <engagement> " +
