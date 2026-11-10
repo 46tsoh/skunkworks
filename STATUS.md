@@ -66,6 +66,7 @@ action named. Nothing here is faked to look finished.
 | 17 | Red-team stage 1 — bounded exploit→verify (`aegis exploit`) | **done** | — scope-gated, non-destructive; XSS/boolean-SQLi/open-redirect; live-proven (reflected XSS confirmed on demo.testfire.net; out-of-scope refused) |
 | 18 | Red-team stage 2 — post-exploit flag retrieval (`allow_post_exploit`) | **done** | — cmdi confirm (reflection-immune arithmetic oracle) → read-only `id`/`uname`/`cat`; fixed command allowlist; live-proven flag capture on a local target; gated off by default; survived an adversarial multi-agent review |
 | 19 | Red-team stage 3 — lateral movement (`allow_lateral` + `max_hosts`) | **done** | — pivots read-only to IN-SCOPE hosts only (scope never auto-expands; out-of-scope discovered hosts refused & never contacted); `max_hosts`-bounded; live-proven A→B pivot flag capture; gated off by default; survived an adversarial multi-agent review (8 findings fixed) |
+| 20 | Red-team stage 1 — two more exploit→verify techniques (`--type traversal`, `--type ssti`) | **done** | — path traversal (CWE-22): bounded `../` to a benign read-only system file matched on a fixed public signature, no content exfiltrated; SSTI (CWE-1336): reflection-immune template-arithmetic oracle exactly like `cmdi`; both verify-only, non-destructive, stage-1 ONLY (set no context that trips stages 2/3); offline fixtures only |
 
 ### Open follow-ups (not blocking)
 

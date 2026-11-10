@@ -70,6 +70,21 @@ and **verify** the result (e.g. a boolean-SQLi oracle, a reflected marker, an
 out-of-band callback the operator hosts). Stop at proof. No shell, no
 persistence, no pivoting. This already solves most OSAI/CTF web challenges.
 
+Stage-1 techniques (`aegis exploit --type`), each a bounded, read-only,
+non-destructive confirm with an observable oracle, then stop:
+
+| `--type` | technique | CWE | oracle |
+|----------|-----------|-----|--------|
+| `xss` | reflected XSS | CWE-79 | unique marker echoed UNENCODED into an HTML response |
+| `sqli` | boolean/error SQLi | CWE-89 | true≈baseline / false differs, or a DB-error string (read-only; never time-based or stacked) |
+| `redirect` | open redirect | CWE-601 | benign off-site marker returned in the `Location` header |
+| `cmdi` | OS command injection | CWE-78 | injected shell *arithmetic* evaluated (`token-$((A*B))` → the product); reflection-immune |
+| `traversal` | path traversal | CWE-22 | a bounded `../` sequence reaches a benign, universally-present read-only system file whose fixed public signature appears (no sensitive content parsed or exfiltrated) |
+| `ssti` | server-side template injection | CWE-1336 | injected template arithmetic evaluated (`token-{{A*B}}` → the product); reflection-immune exactly like `cmdi` |
+
+Only a sequence-capable `cmdi` foothold carries context that drives stages 2/3;
+`traversal` and `ssti` are stage-1 ONLY and set no such context.
+
 **Stage 2 — post-exploitation (gated by `allow_post_exploit`).**
 On a verified foothold, run bounded read-only proof commands (retrieve a flag,
 `id`, read a named file) within scope. No persistence, no destructive actions.

