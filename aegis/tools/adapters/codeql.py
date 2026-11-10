@@ -121,23 +121,38 @@ class CodeqlDockerTool(DockerBackedTool):
     name = "codeql"
     kind = ToolKind.STATIC
     image = IMAGE
-    timeout_s = 600.0  # database build + analyze is slow
+    # Database build + analyze is slow, and far slower under CPU emulation
+    # (amd64 image on an arm64 host). Give it a wide ceiling.
+    timeout_s = 2400.0
+    # The cstsectools image's own ENTRYPOINT runs a setup.py startup shim that
+    # fails (and mangles our command); codeql is already on PATH, so bypass it
+    # and exec our script directly.
+    entrypoint = "bash"
+    # Where the bundled standard query suites live in the image (offline — no
+    # pack download needed). Suites are referenced by full path for robust
+    # resolution (a bare suite name does not resolve without a search path).
+    REPO_DIR = "/usr/local/codeql-home/codeql-repo"
 
     def argv(self, target: str, **opts):
         # Build a database over the read-only mount, then analyze with a security
-        # query suite, emitting SARIF to stdout for parse(). NOTE: real CodeQL
-        # runs need a language hint and compile DBs for compiled languages; this
-        # default targets an interpreted tree. Override via opts.
+        # query suite, emitting SARIF to a file we read back. The DB build logs
+        # to stderr so stdout stays clean. CodeQL needs a build for compiled
+        # languages; this default targets an interpreted tree (override via
+        # opts["language"] / opts["suite"]).
         lang = opts.get("language", "python")
-        suite = opts.get("suite", f"{lang}-security-extended.qls")
+        suite = opts.get(
+            "suite",
+            f"{self.REPO_DIR}/{lang}/ql/src/codeql-suites/"
+            f"{lang}-security-extended.qls")
         db = "/tmp/codeql-db"
+        out = opts.get("report_path", "/tmp/codeql.sarif")
         script = (
             f"codeql database create {db} --language={lang} "
             f"--source-root={self.container_workdir} --overwrite 1>&2 && "
             f"codeql database analyze {db} {suite} --format=sarif-latest "
-            f"--output=/dev/stdout --threads=0 2>/dev/null"
+            f"--output={out} --threads=0 1>&2 && cat {out}"
         )
-        return ["bash", "-lc", script]
+        return ["-lc", script]
 
 
 def make_docker() -> CodeqlDockerTool:

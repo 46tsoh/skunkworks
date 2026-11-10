@@ -194,12 +194,38 @@ def test_report_scratch_dir_shielded_by_private_parent(monkeypatch):
     assert captured["parent_mode"] == 0o700     # private parent shields the mount
 
 
+def test_run_container_entrypoint_override(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(rt.subprocess, "run",
+                        lambda cmd, **k: (captured.__setitem__("cmd", cmd)
+                                          or subprocess.CompletedProcess(cmd, 0, "", "")))
+    rt.run_container("img:1", ["-lc", "echo hi"], entrypoint="bash")
+    cmd = captured["cmd"]
+    i = cmd.index("--entrypoint")
+    assert cmd[i + 1] == "bash"
+
+
 def test_run_container_timeout(monkeypatch):
     def boom(*a, **k):
         raise subprocess.TimeoutExpired(cmd="docker", timeout=1)
     monkeypatch.setattr(rt.subprocess, "run", boom)
     cr = rt.run_container("img", ["x"])
     assert cr.timed_out and cr.exit_code == 124
+
+
+def test_run_container_timeout_bytes_output_normalized(monkeypatch):
+    """On timeout, subprocess may return BYTES for stdout/stderr even with
+    text=True; run_container must normalize to str so callers can concatenate
+    it (regression: a timed-out tool crashed with str+bytes TypeError)."""
+    def boom(*a, **k):
+        raise subprocess.TimeoutExpired(cmd="docker", timeout=1,
+                                        output=b"partial out", stderr=b"partial err")
+    monkeypatch.setattr(rt.subprocess, "run", boom)
+    cr = rt.run_container("img", ["x"])
+    assert cr.timed_out and cr.exit_code == 124
+    assert cr.stdout == "partial out" and cr.stderr == "partial err"
+    # the concatenation that used to crash now works
+    assert cr.stdout + "\n" + cr.stderr == "partial out\npartial err"
 
 
 def test_run_local_success_and_failure(monkeypatch):

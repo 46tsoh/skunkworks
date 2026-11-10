@@ -47,6 +47,22 @@ def test_codeql_parse_handles_empty():
     assert codeql.parse('{"runs": [{"tool": {"driver": {}}, "results": []}]}', "t") == []
 
 
+def test_codeql_argv_bypasses_entrypoint_and_uses_bundled_suite():
+    """CodeQL overrides the image's broken setup.py entrypoint, builds a DB,
+    analyzes with a full-path bundled suite (offline, no pack download), and
+    emits SARIF on stdout for the parser."""
+    tool = codeql.make_docker()
+    assert tool.entrypoint == "bash"   # the image's setup.py shim is bypassed
+    argv = tool.argv("/work", language="python")
+    assert argv[0] == "-lc"
+    script = argv[1]
+    assert "codeql database create" in script
+    assert "codeql database analyze" in script
+    # suite resolved by full path inside the bundled repo (no network pack fetch)
+    assert tool.REPO_DIR in script and "python-security-extended.qls" in script
+    assert script.rstrip().endswith("sarif")  # cat the SARIF to stdout
+
+
 def test_codeql_unavailable_without_image(monkeypatch):
     import aegis.tools.base as base
     monkeypatch.setattr(base, "docker_available", lambda: True)
