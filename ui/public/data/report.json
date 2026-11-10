@@ -1090,7 +1090,7 @@
           "validated_exploitable": 3,
           "validated_informational": 0
         },
-        "duration_ms": 7.06,
+        "duration_ms": 7.66,
         "error": null,
         "extra": {
           "graph": [
@@ -1984,7 +1984,7 @@
           "validated_informational": 1,
           "priority": 0
         },
-        "duration_ms": 3.31,
+        "duration_ms": 5.82,
         "error": null,
         "extra": {
           "hypotheses": [
@@ -2028,9 +2028,9 @@
       }
     ],
     "cross_engine_dedup": 1,
-    "started_at": 1794298272.7090402,
-    "finished_at": 1794298272.7205381,
-    "duration_ms": 11.5,
+    "started_at": 1794299001.640883,
+    "finished_at": 1794299001.655591,
+    "duration_ms": 14.71,
     "decision_log_path": "/Users/bobcat/Documents/git/skunkworks/ui/public/data/decisions.jsonl"
   }
 }
