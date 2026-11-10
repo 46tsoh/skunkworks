@@ -24,8 +24,28 @@ action named. Nothing here is faked to look finished.
 | 3 | Tool/scanner adapters behind a common `Tool` interface (dynamic + static capabilities) | **done** | — (17 adapters, dockerized + fixtures, wired into engines) |
 | 4 | Analysis parity through the decision layer (exploitability chain + hypothesis posterior + triage/dedup/CVSS), calibrated on a labeled corpus | **done** | — (labeled corpus + `aegis calibrate`) |
 | 5 | Unified UI (Vite + React + Tailwind) over both engines | **done** (functional; design polish pass pending) | — (`ui/`; optional `/impeccable` + landing-page polish is a follow-up) |
-| 6 | End-to-end interop: one command runs both engines over the sample target → one unified deduped report + dashboard | **not started** | depends on M2, M5 |
-| 7 | Docs, tests, CI (README, architecture doc, >80% core coverage, CI) | **partial** | arch map + README done; add GitHub Actions CI (user-approved) running pytest + UI build on every PR |
+| 6 | End-to-end interop: one command runs both engines over the sample target → one unified deduped report + dashboard | **done** | — (`aegis dashboard`) |
+| 7 | Docs, tests, CI (README, architecture doc, >80% core coverage, CI) | **done** | — (README, arch map, specs, NOTICE; 96% coverage; CI runs pytest 3.9/3.12 + dashboard build) |
+
+## Milestones 6 & 7 — done
+
+- **M6 interop:** `aegis dashboard` runs both engines over the bundled sample
+  target, writes the unified deduped/ranked report to `ui/public/data`, and
+  starts the dashboard — one local command end to end (`--use-tools` to source
+  from the adapters; `--no-serve` for data only). Tested with a temp root so the
+  committed demo data is untouched.
+- **M7 docs/tests/CI:** README (quick start, models, tools, dashboard, the one
+  command), the architecture map, per-subsystem specs in `docs/specs/`, and
+  `NOTICE` crediting the upstreams. Coverage ~96% (core bar >80%). CI runs
+  pytest on 3.9 + 3.12 with a coverage gate, plus a dashboard build, on every PR.
+
+### Remaining optional polish (not blocking the roadmap)
+
+- The full `design-taste-frontend` / `/impeccable` finish gate for a
+  marketing-style landing/overview page and a browser-run visual polish pass
+  (the data-dense dashboard app is intentionally outside the company-site gate).
+- Per-tool live exit-code tuning for the deep/dynamic Docker adapters (fixtures
+  are the tested contract; live runs fail-closed safely in the meantime).
 
 ## Milestone 5 — done (functional; design polish pending)
 
