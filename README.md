@@ -84,4 +84,21 @@ truth), and their original test suites still pass through the shims.
 - **Subsystem specs (clean-room, grows per milestone):** `docs/specs/`
 - **Upstream credits:** [`NOTICE`](NOTICE)
 
+## Dashboard
+
+A local **Vite + React + Tailwind** dashboard over the unified report — net-new
+for RAPTOR, a big upgrade on Strix's TUI. It runs entirely locally (nothing
+hosted):
+
+```bash
+aegis run --out ui/public/data     # produce a run for the dashboard
+cd ui && npm install && npm run dev # http://localhost:5173
+```
+
+Views: Overview (KPIs, severity donut, OWASP, per-engine rollup), Findings
+explorer (filter/sort + a detail drawer with the CVSS vector, the 8-stage
+exploitability chain, evidence and the per-finding decision trail), Agent graph,
+Hypotheses queue, the full **decision audit trail**, and the Tools catalog. See
+[`ui/README.md`](ui/README.md).
+
 Licensed under Apache-2.0.

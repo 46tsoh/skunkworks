@@ -7,3 +7,6 @@ reference/_upstream/
 *.egg-info/
 .coverage
 htmlcov/
+
+# keep the dashboard demo decision log (the bare rule above ignores run output)
+!ui/public/data/decisions.jsonl
