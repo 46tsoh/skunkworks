@@ -62,6 +62,22 @@ attack traffic). `--active` runs ZAP's **active scanner**, which sends real
 attack payloads (SQLi, XSS, traversal…) to every parameter — intrusive and slow,
 so it is opt-in and, like every scan, still gated behind `--authorized`.
 
+### RAPTOR static tools on real code (offline, local)
+
+The deep static analyzers run against a local code tree with `--network none`
+(their offline data is provisioned once by `./docker/pull-images.sh`):
+
+```bash
+# SCA (Trivy), SAST (Semgrep) and dataflow (CodeQL) over a local repo:
+aegis run --target /path/to/repo --use-tools --out ui/public/data
+```
+
+- **sca** (Trivy) — vulnerable/outdated dependencies; vuln DB in a cached volume.
+- **semgrep** — pattern SAST across 16 languages; OSS `semgrep-rules` in a volume.
+- **codeql** — source→sink **dataflow/taint** (injection, SSRF, open-redirect);
+  query packs ship in the image. Builds a DB then analyzes (slow; far slower if
+  the image is emulated on a non-amd64 host).
+
 ## Tools
 
 17 capability adapters sit behind one `Tool` interface (`aegis.tools`) — static

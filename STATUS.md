@@ -61,10 +61,11 @@ action named. Nothing here is faked to look finished.
 | 12 | Agent-driven selection of the real tool adapters (`--use-tools` shows genuine adapter calls) | **done** (merged #14) | — (`RegistryProbe`; tools run once, cached) |
 | 13 | `aegis scan` — authorized live scanning against an external target, driven through the full agent loop → dashboard | **done** (merged #16, #19, #20) | — (`--authorized`-gated, scanners-only, per-agent tokens) |
 | 14 | All three network-scanner categories live-proven against authorized internet targets | **done** (merged #22, #23) | — recon/nmap (scanme.nmap.org), web/nuclei (testphp.vulnweb.com), dast/ZAP passive+active (demo.testfire.net → live SQLi + XSS) |
+| 15 | RAPTOR static tools live-proven on real code (offline, local) | **done** (merged #25, #26, #27) | — sca/Trivy (74 real CVEs), semgrep (6 SAST findings), codeql (4 dataflow source→sink: code/command/SQL-injection, URL-redirect) |
 
 ### Open follow-ups (not blocking)
 
-- **Live scanning across all categories — done.** recon/web/dast are live-proven end-to-end (`aegis scan --tool {recon,web,dast} [--active]`). Remaining images are the deep static/RAPTOR tools (codeql/semgrep/trivy/fuzz) and the other dynamic adapters (proxy/browser) — fixtures are the tested contract; live fails closed until each is pulled + exit-code-tuned.
+- **Live scanning across all categories — done.** recon/web/dast scanners (`aegis scan --tool {recon,web,dast} [--active]`) and the RAPTOR static tools sca/semgrep/codeql (`aegis run --target <code> --use-tools`) are all live-proven. Each offline-data need is provisioned once (nuclei templates, Trivy vuln DB, semgrep-rules) by `docker/pull-images.sh`; scans then run with `--network none`. Remaining un-proven images are the deeper dynamic adapters (proxy/browser) and fuzz/binary/crash — fixtures are the tested contract; live fails closed until each is pulled + exit-code-tuned.
 - **Autonomous red-teaming / exploitation chaining (OSAI & CTF)** — the next major thrust: the agent actively *chains* attacks (not just scans + analyzes). Offensive capability with real safety weight; warrants a short design on scope + authorization model before building.
 - **Per-agent token attribution** — usage is metered per run; attributing it per agent/turn is a follow-on.
 - **Free-form tool invocation** — the agent selects from registered adapters in order; arbitrary model-authored commands/args are the deepest Strix behaviour and remain future work (defensive-scope-gated).
