@@ -1,0 +1,17 @@
+{
+  "engagement": "example-ctf",
+  "authorized_by": "operator",
+  "expires": "2999-01-01T00:00:00Z",
+  "targets": {
+    "hosts": ["10.129.0.0/24", "target.example"],
+    "urls": ["http://target.example/"]
+  },
+  "deny": {
+    "hosts": ["10.129.0.1"]
+  },
+  "limits": {
+    "max_hosts": 8,
+    "allow_post_exploit": false,
+    "allow_lateral": false
+  }
+}
