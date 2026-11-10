@@ -1,4 +1,7 @@
 import { useMemo, useState } from "react";
+import { ReactFlow, Background, Controls, Handle, Position } from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
+import dagre from "@dagrejs/dagre";
 import { Panel, Tag } from "../lib/ui.jsx";
 import { useLiveEvents, agentsFromEvents } from "../lib/data.js";
 
@@ -34,7 +37,6 @@ export default function Agents({ model }) {
   }, [transcript, model.graph]);
 
   const roots = graph.filter((n) => !n.parent_id);
-  const childrenOf = (id) => graph.filter((n) => n.parent_id === id);
 
   const [picked, setSelectedId] = useState(null);
   const selectedId = picked ?? roots[0]?.id ?? null;
@@ -79,12 +81,7 @@ export default function Agents({ model }) {
           <p className="mb-3 text-[12px] text-[var(--color-faint)]">
             Select an agent to read its transcript.
           </p>
-          <div className="space-y-4">
-            {roots.map((r) => (
-              <AgentGraph key={r.id} root={r} children={childrenOf(r.id)}
-                          selectedId={selectedId} onSelect={setSelectedId} />
-            ))}
-          </div>
+          <AgentFlow graph={graph} selectedId={selectedId} onSelect={setSelectedId} />
         </Panel>
 
         {selected && (
@@ -266,80 +263,104 @@ function LegacyTrajectory({ node }) {
   );
 }
 
-/* ---- graph (unchanged computed-coordinate layout) ----------------------- */
+/* ---- graph (React Flow + dagre hierarchical auto-layout) ---------------- */
 
-function AgentGraph({ root, children, selectedId, onSelect }) {
-  const NODE_W = 184;
-  const ROOT_Y = 10;
-  const NODE_H = 60;
-  const BUS_Y = ROOT_Y + NODE_H + 26;
-  const CHILD_Y = BUS_Y + 26;
-  const HEIGHT = CHILD_Y + NODE_H + 10;
+const NODE_W = 196;
+const NODE_H = 72;
+const nodeTypes = { agent: AgentFlowNode };
 
-  const n = Math.max(children.length, 1);
-  const xPct = (i) => ((i + 0.5) / n) * 100;
-  const rootX = 50;
-  const xFirst = children.length ? xPct(0) : rootX;
-  const xLast = children.length ? xPct(children.length - 1) : rootX;
+function layout(agents) {
+  const g = new dagre.graphlib.Graph();
+  g.setGraph({ rankdir: "TB", nodesep: 36, ranksep: 56, marginx: 8, marginy: 8 });
+  g.setDefaultEdgeLabel(() => ({}));
+  agents.forEach((a) => g.setNode(a.id, { width: NODE_W, height: NODE_H }));
+  const edges = [];
+  agents.forEach((a) => {
+    if (a.parent_id && agents.some((n) => n.id === a.parent_id)) {
+      g.setEdge(a.parent_id, a.id);
+      edges.push({
+        id: `${a.parent_id}-${a.id}`, source: a.parent_id, target: a.id,
+        type: "smoothstep", animated: a.status === "running",
+        style: { stroke: "var(--color-border-strong)", strokeWidth: 1.5 },
+      });
+    }
+  });
+  dagre.layout(g);
+  const nodes = agents.map((a) => {
+    const p = g.node(a.id);
+    return {
+      id: a.id, type: "agent", data: a,
+      position: { x: p.x - NODE_W / 2, y: p.y - NODE_H / 2 },
+      draggable: false,
+    };
+  });
+  return { nodes, edges };
+}
 
+function AgentFlow({ graph, selectedId, onSelect }) {
+  const { nodes, edges } = useMemo(() => layout(graph), [graph]);
+  // inject selection state into node data (so the custom node can style itself)
+  const rfNodes = useMemo(
+    () => nodes.map((n) => ({ ...n, data: { ...n.data, selected: n.id === selectedId },
+                              selected: n.id === selectedId })),
+    [nodes, selectedId]
+  );
   return (
-    <div className="overflow-x-auto pb-1">
-      <div className="relative mx-auto" style={{ height: HEIGHT, minWidth: n * (NODE_W + 24) }}>
-        <svg className="absolute inset-0 h-full w-full" aria-hidden>
-          {children.length > 0 && (
-            <line x1={`${rootX}%`} y1={ROOT_Y + NODE_H} x2={`${rootX}%`} y2={BUS_Y}
-                  stroke="var(--color-border-strong)" strokeWidth="1.5" />
-          )}
-          {children.length > 1 && (
-            <line x1={`${xFirst}%`} y1={BUS_Y} x2={`${xLast}%`} y2={BUS_Y}
-                  stroke="var(--color-border-strong)" strokeWidth="1.5" />
-          )}
-          {children.map((c, i) => (
-            <line key={c.id} x1={`${xPct(i)}%`} y1={BUS_Y} x2={`${xPct(i)}%`} y2={CHILD_Y}
-                  stroke="var(--color-border-strong)" strokeWidth="1.5" />
-          ))}
-        </svg>
-        <GraphNode node={root} x={rootX} y={ROOT_Y} w={NODE_W} root
-                   selected={selectedId === root.id} onSelect={onSelect} />
-        {children.map((c, i) => (
-          <GraphNode key={c.id} node={c} x={xPct(i)} y={CHILD_Y} w={NODE_W}
-                     selected={selectedId === c.id} onSelect={onSelect} />
-        ))}
-      </div>
+    <div style={{ height: 340 }} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]">
+      <ReactFlow
+        nodes={rfNodes}
+        edges={edges}
+        nodeTypes={nodeTypes}
+        colorMode="dark"
+        fitView
+        fitViewOptions={{ padding: 0.2 }}
+        minZoom={0.4}
+        maxZoom={1.6}
+        proOptions={{ hideAttribution: true }}
+        nodesConnectable={false}
+        onNodeClick={(_, n) => onSelect(n.id)}
+        style={{ background: "transparent" }}
+      >
+        <Background color="var(--color-border)" gap={20} size={1} />
+        <Controls showInteractive={false} />
+      </ReactFlow>
     </div>
   );
 }
 
-function GraphNode({ node, x, y, w, root, selected, onSelect }) {
-  const color = statusColor(node.status);
+function AgentFlowNode({ data }) {
+  const { role, task, status, steps_spent, selected } = data;
+  const root = !data.parent_id;
+  const color = statusColor(status);
   return (
-    <button
-      onClick={() => onSelect(node.id)}
-      aria-pressed={selected}
-      className="lift absolute rounded-xl border bg-[var(--color-surface-2)] px-3 py-2 text-left"
+    <div
+      className="rounded-xl border bg-[var(--color-surface-2)] px-3 py-2 text-left"
       style={{
-        left: `${x}%`, top: y, width: w, transform: "translateX(-50%)",
+        width: NODE_W, height: NODE_H,
         borderColor: selected ? "var(--color-accent)"
           : root ? "color-mix(in oklab, var(--color-accent) 40%, transparent)"
           : "var(--color-border-strong)",
-        boxShadow: selected ? "0 0 0 1px var(--color-accent)" : undefined,
+        boxShadow: selected ? "0 0 0 1px var(--color-accent)" : "none",
+        cursor: "pointer",
       }}
     >
+      <Handle type="target" position={Position.Top} style={{ opacity: 0 }} isConnectable={false} />
       <div className="flex items-center justify-between gap-2">
         <span className="truncate text-[13px] font-semibold"
               style={root ? { color: "var(--color-accent)" } : undefined}>
-          {ROLE_LABEL[node.role] || node.role}
+          {ROLE_LABEL[role] || role}
         </span>
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} title={node.status} />
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} title={status} />
       </div>
-      <div className="mt-0.5 truncate text-[11px] text-[var(--color-faint)]" title={node.task}>{node.task}</div>
+      <div className="mt-0.5 truncate text-[11px] text-[var(--color-faint)]" title={task}>{task}</div>
       <div className="mt-1.5 flex items-center gap-1.5">
-        <StepMeter steps={node.steps_spent} />
+        <StepMeter steps={steps_spent} />
         <span className="font-mono text-[10px] text-[var(--color-faint)] tabular-nums">
-          {node.steps_spent} step{node.steps_spent === 1 ? "" : "s"}
+          {steps_spent} step{steps_spent === 1 ? "" : "s"}
         </span>
       </div>
-    </button>
+      <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} isConnectable={false} />
+    </div>
   );
 }
 
