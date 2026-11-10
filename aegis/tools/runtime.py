@@ -63,6 +63,7 @@ def run_container(
     entrypoint: Optional[str] = None,
     volumes: Optional[Sequence[Tuple[str, str]]] = None,  # (named volume, container) ro
     rw_mounts: Optional[Sequence[Tuple[str, str]]] = None,  # (host, container) read-WRITE
+    rw_volumes: Optional[Sequence[Tuple[str, str]]] = None,  # (named volume, container) rw
 ) -> ContainerRun:
     """Run ``image`` locally with the given args and return its output.
 
@@ -88,6 +89,12 @@ def run_container(
         # report as a *file* (e.g. ZAP writes JSON to /zap/wrk). The caller owns
         # a fresh, empty host dir; nothing sensitive is ever mounted this way.
         cmd += ["-v", f"{Path(host).resolve()}:{container}"]
+    for name, container in (rw_volumes or []):
+        # A writable *named* Docker volume (not a host path) for a tool that
+        # must read AND write a provisioned data set — e.g. Trivy reads its vuln
+        # DB and writes its scan cache into the same cache dir. The data stays
+        # inside the named volume; no host path is exposed.
+        cmd += ["-v", f"{name}:{container}"]
     cmd += ["-w", workdir, image, *args]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)

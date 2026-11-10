@@ -234,6 +234,14 @@ class DockerBackedTool:
         # (nuclei templates) override this.
         return []
 
+    def rw_volumes(self):
+        # Named Docker volumes to mount read-WRITE, for a tool that reads a
+        # provisioned data set and writes alongside it (e.g. Trivy's vuln DB +
+        # its scan cache share one cache dir). Default none. Stays inside the
+        # named volume — no host path is exposed, and the scan still runs with
+        # the default --network none.
+        return []
+
     def report_mount(self):
         # Some scanners cannot stream their machine-readable report to stdout
         # and must write it to a *file* (ZAP writes JSON under /zap/wrk). A tool
@@ -303,7 +311,8 @@ class DockerBackedTool:
             cr = run_container(self.image, self.argv(target, **opts),
                                mounts=mounts, workdir=self.container_workdir,
                                timeout_s=self.timeout_s, network=network,
-                               volumes=self.volumes(), rw_mounts=rw_mounts)
+                               volumes=self.volumes(), rw_mounts=rw_mounts,
+                               rw_volumes=self.rw_volumes())
             raw = cr.stdout + (("\n[stderr]\n" + cr.stderr) if cr.stderr else "")
             # Fail-closed: a timeout or an unexpected exit code is an ERROR, and
             # no candidates are surfaced from a failed run.
