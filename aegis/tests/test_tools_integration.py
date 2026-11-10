@@ -38,6 +38,38 @@ def test_orchestrator_with_registry_merges_both_engines():
     assert result.kb.accepted  # findings flowed tool -> engine -> pipeline -> KB
 
 
+def test_failing_tool_marks_run_degraded_not_clean():
+    # A tool that errors must be reported, never silently dropped (no fail-open).
+    from aegis.tools.base import Tool, ToolKind, ToolResult, ToolStatus, ToolRegistry
+    from aegis.engines import DynamicEngine, StaticEngine, Orchestrator
+
+    class FailingTool:
+        name = "boomtool"
+        kind = ToolKind.STATIC
+        requires_binary = None
+        def available(self):
+            return True
+        def run(self, target, **opts):
+            return ToolResult("boomtool", ToolStatus.ERROR, errors=["kaboom"],
+                              target=target)
+
+    reg = ToolRegistry()
+    reg.register(FailingTool())
+    result = Orchestrator([StaticEngine(registry=reg)]).run(
+        RunConfig(target="data/sample_target", parallel=False, run_id="deg"))
+    assert result.kb.metrics["degraded"] is True
+    failures = result.kb.metrics["tool_failures"]
+    assert any(f["name"] == "boomtool" and f["status"] == "error" for f in failures)
+
+
+def test_clean_run_is_not_degraded():
+    reg = default_registry(prefer_docker=False)
+    result = default_orchestrator(registry=reg).run(
+        RunConfig(target="data/sample_target", parallel=False, run_id="clean"))
+    assert result.kb.metrics["degraded"] is False
+    assert result.kb.metrics["tool_failures"] == []
+
+
 def test_tool_candidates_run_through_pipeline():
     from aegis.analysis.pipeline import run
     reg = default_registry(prefer_docker=False)

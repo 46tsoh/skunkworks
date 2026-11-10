@@ -85,6 +85,7 @@ class StaticEngine:
         self._priority_min = priority_min
         self._registry = registry
         self._tool_names = tool_names
+        self._tool_runs: list = []
         self.hypotheses: List[Hypothesis] = []
         self.coverage = CoverageLedger()
 
@@ -94,8 +95,9 @@ class StaticEngine:
     def enumerate_candidates(self, target: str,
                              config: AegisConfig) -> Sequence[Candidate]:
         if self._registry is not None:
-            return _candidates_from_tools(self._registry, self.kind, target,
-                                          self._tool_names)
+            cands, self._tool_runs = _candidates_from_tools(
+                self._registry, self.kind, target, self._tool_names)
+            return cands
         path = Path(target or _DEFAULT_TARGET)
         if path.is_dir():
             path = path / "candidates_static.json"
@@ -167,7 +169,10 @@ class StaticEngine:
             rejected=len(kb.rejected), stage_counts=stage_counts,
             duration_ms=(time.perf_counter() - t0) * 1000.0,
             extra={"hypotheses": [h.as_dict() for h in self.hypotheses],
-                   "coverage": self.coverage.summary()},
+                   "coverage": self.coverage.summary(),
+                   "tool_runs": self._tool_runs,
+                   "degraded": any(r["status"] not in ("ok",)
+                                   for r in self._tool_runs)},
         )
 
 

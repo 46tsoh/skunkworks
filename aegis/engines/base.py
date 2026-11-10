@@ -119,13 +119,14 @@ _RANK_KEY = lambda f: (f.exploitable, f.cvss_score, f.posterior)  # noqa: E731
 
 
 def _candidates_from_tools(registry, kind_str: str, target: str,
-                           tool_names=None) -> list:
-    """Collect candidates by running the registry's available tools of a kind.
+                           tool_names=None):
+    """Run the registry's available tools of a kind; collect candidates + status.
 
-    Used by an engine configured with a ToolRegistry: each tool that is
-    available (fixture offline, or Docker-backed when its image is present) runs
-    against the target and contributes its candidates, stamped with the engine's
-    kind as provenance.
+    Returns ``(candidates, tool_runs)`` where ``tool_runs`` is a per-tool record
+    ``{name, status, errors, candidates}``. A tool that errors does NOT silently
+    vanish: its failure is reported so the engine can mark the run degraded
+    rather than present an incomplete scan as clean (never fail-open on
+    integrity).
     """
     from aegis.tools.base import ToolKind
     kind = ToolKind(kind_str)
@@ -135,13 +136,17 @@ def _candidates_from_tools(registry, kind_str: str, target: str,
     else:
         tools = registry.available(kind)
     out: list = []
+    tool_runs: list = []
     for tool in tools:
         result = tool.run(target)
+        tool_runs.append({"name": result.tool, "status": result.status.value,
+                          "errors": list(result.errors),
+                          "candidates": len(result.candidates)})
         if result.ok:
             for c in result.candidates:
                 c.source_engine = kind_str
             out.extend(result.candidates)
-    return out
+    return out, tool_runs
 
 
 class Orchestrator:
@@ -255,6 +260,20 @@ class Orchestrator:
             "decision_cache_hits": router.metrics.cache_hits,
             "decisions_by_backend": dict(router.metrics.by_backend),
         }
+        # Integrity: a scan is 'degraded' if any engine raised or any tool it
+        # ran did not return OK — never present an incomplete scan as clean.
+        tool_failures = []
+        degraded = False
+        for r in ordered_reports:
+            if r.error:
+                degraded = True
+            for tr in r.extra.get("tool_runs", []):
+                if tr["status"] != "ok":
+                    tool_failures.append({"engine": r.name, **tr})
+            if r.extra.get("degraded"):
+                degraded = True
+        master.metrics["degraded"] = degraded
+        master.metrics["tool_failures"] = tool_failures
 
         finished = time.time()
         duration_ms = (time.perf_counter() - t0) * 1000.0

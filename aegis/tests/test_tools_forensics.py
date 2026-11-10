@@ -1,11 +1,11 @@
-"""Tests for the git-history forensics adapter (host-local, static).
+"""Tests for the git-history forensics adapter (containerised, static).
 
 All offline: the live gitleaks path is exercised through availability checks and
-a monkeypatched ``runtime.run_local`` that returns the recorded fixture, never by
-installing gitleaks or touching a real repository.
+a monkeypatched ``run_container`` that returns the recorded fixture, never by
+pulling the image or touching a real repository. Running gitleaks in a
+container (target mounted read-only, no network) is what keeps a hostile target
+repo from executing on the host.
 """
-
-import shutil
 
 from aegis.tools.adapters import forensics
 from aegis.tools.base import ToolKind, ToolStatus
@@ -43,59 +43,74 @@ def test_forensics_parse_handles_empty():
 
 
 def test_forensics_parse_tolerates_sparse_finding():
-    # A finding missing most fields must not crash the parser.
     cands = forensics.parse('[{"RuleID": "generic-api-key"}]', "t")
     assert len(cands) == 1
     assert cands[0].cwe == "CWE-798"
     assert cands[0].component == "?:0"
 
 
-# -- availability degradation (git binary absent) ----------------------------
-def test_host_tool_unavailable_without_git(monkeypatch):
-    monkeypatch.setattr(shutil, "which", lambda binary: None)
-    tool = forensics.make_host()
-    assert tool.available() is False
-    result = tool.run("data/sample_repo")
+# -- containerised execution (no host gitleaks/git, no image pull) -----------
+def test_forensics_unavailable_without_image(monkeypatch):
+    import aegis.tools.base as base
+    monkeypatch.setattr(base, "docker_available", lambda: True)
+    monkeypatch.setattr(base, "image_present", lambda image: False)
+    result = forensics.make_docker().run("data/sample_repo")
     assert result.status == ToolStatus.UNAVAILABLE
     assert result.candidates == []
-    assert result.errors and "git" in result.errors[0]
 
 
-# -- OK path when git present (run_local monkeypatched to the fixture) --------
-def test_host_tool_parses_when_git_present(monkeypatch):
-    monkeypatch.setattr(shutil, "which", lambda binary: f"/usr/bin/{binary}")
+def test_forensics_unavailable_without_daemon(monkeypatch):
+    import aegis.tools.base as base
+    monkeypatch.setattr(base, "docker_available", lambda: False)
+    assert forensics.make_docker().available() is False
+    assert forensics.make_docker().run("x").status == ToolStatus.UNAVAILABLE
+
+
+def test_forensics_parses_when_image_present(monkeypatch):
+    import aegis.tools.base as base
+    monkeypatch.setattr(base, "docker_available", lambda: True)
+    monkeypatch.setattr(base, "image_present", lambda image: True)
     fixture_json = forensics._FIXTURE.read_text()
-    monkeypatch.setattr(forensics.runtime, "run_local",
+    monkeypatch.setattr(base, "run_container",
                         lambda *a, **k: ContainerRun(0, fixture_json, ""))
-    result = forensics.make_host().run("data/sample_repo")
+    result = forensics.make_docker().run("data/sample_repo")
     assert result.status == ToolStatus.OK
     assert len(result.candidates) == 3
-    assert result.metadata["scanner"] == "gitleaks"
-    assert result.metadata["scanner_present"] is True
+    assert result.metadata["image"] == forensics.IMAGE
 
 
-def test_host_tool_timeout_is_error(monkeypatch):
-    monkeypatch.setattr(shutil, "which", lambda binary: f"/usr/bin/{binary}")
-    monkeypatch.setattr(forensics.runtime, "run_local",
-                        lambda *a, **k: ContainerRun(124, "", "", timed_out=True))
-    result = forensics.make_host().run("data/sample_repo")
-    assert result.status == ToolStatus.ERROR
-    assert result.errors == ["timed out"]
+def test_forensics_runs_read_only_no_network(monkeypatch):
+    # The container is launched read-only + no-network: capture the real argv.
+    import subprocess
+    import aegis.tools.runtime as rt
+    captured = {}
+
+    def fake_run(cmd, capture_output, text, timeout):
+        captured["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0, "[]", "")
+
+    monkeypatch.setattr(rt.subprocess, "run", fake_run)
+    rt.run_container(forensics.IMAGE, forensics.make_docker().argv("/work"),
+                     mounts=[("data", "/work")])
+    cmd = captured["cmd"]
+    assert "--network=none" in cmd
+    assert "--pull=never" in cmd
+    assert any(p.endswith(":/work:ro") for p in cmd)  # read-only mount
 
 
-# -- ERROR path (exception from the subprocess layer is caught) --------------
-def test_host_tool_error_is_caught(monkeypatch):
-    monkeypatch.setattr(shutil, "which", lambda binary: f"/usr/bin/{binary}")
+def test_forensics_error_is_caught(monkeypatch):
+    import aegis.tools.base as base
+    monkeypatch.setattr(base, "docker_available", lambda: True)
+    monkeypatch.setattr(base, "image_present", lambda image: True)
 
     def boom(*a, **k):
         raise RuntimeError("gitleaks exploded")
-
-    monkeypatch.setattr(forensics.runtime, "run_local", boom)
-    result = forensics.make_host().run("data/sample_repo")
+    monkeypatch.setattr(base, "run_container", boom)
+    result = forensics.make_docker().run("data/sample_repo")
     assert result.status == ToolStatus.ERROR
     assert "gitleaks exploded" in result.errors[0]
 
 
 def test_forensics_kind_is_static():
-    assert forensics.make_host().kind == ToolKind.STATIC
+    assert forensics.make_docker().kind == ToolKind.STATIC
     assert forensics.make_fixture().kind == ToolKind.STATIC

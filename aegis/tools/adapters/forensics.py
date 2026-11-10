@@ -1,39 +1,34 @@
-"""Git-history forensics adapter (static) — mines secrets from the local clone.
+"""Git-history forensics adapter (static) — mines secrets from repo history.
 
 This capability treats version-control history as an audit surface: credentials
-that were committed (and often "deleted" in a later commit but still live in the
-history), secrets re-introduced after an earlier cleanup, and security-relevant
-commits. It is **host-local and read-only**: it runs ``gitleaks`` over the
-*local clone only* via :func:`aegis.tools.runtime.run_local` (no container, no
-network) and is gated on ``git`` being present on the host. Unlike the
-Docker-backed scanners, there is no image to pull — the finding source is the
-repository already on disk.
+that were committed (and often "deleted" later but still live in history),
+secrets re-introduced after a cleanup, and security-relevant commits. It runs
+``gitleaks`` **inside a local container** over the target repository mounted
+**read-only**, with no network — so a hostile ``.git/config``, hook, or
+``gitattributes`` in an untrusted target cannot execute on the host (the reason
+this is containerised rather than run on the host).
 
-The same :func:`parse` feeds both the offline fixture adapter (a recorded
-``gitleaks ... --report-format json`` document) and the live host adapter, so
-the parser — the bug-prone part — is exercised with no binary and no network.
-Every hit is normalised to a CWE-798 (Use of Hard-coded Credentials) candidate.
-The raw secret value is never copied into a candidate; only its length and the
-locating metadata (rule, file:line, commit) travel downstream.
+The same :func:`parse` feeds the offline fixture adapter (a recorded
+``gitleaks ... --report-format json`` document) and the live container adapter,
+so the parser — the bug-prone part — is exercised with no binary and no network.
+Every hit is normalised to a CWE-798 (Use of Hard-coded Credentials) candidate;
+the raw secret value is never copied into a candidate (only its length and the
+locating metadata travel downstream).
 """
 
 from __future__ import annotations
 
 import json
-import shutil
-import time
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import List, Sequence
 
 from aegis.knowledge.models import Candidate
-from aegis.tools import runtime
-from aegis.tools.base import ToolKind, ToolResult, ToolStatus
+from aegis.tools.base import DockerBackedTool, FixtureTool, ToolKind
 from aegis.tools.util import make_candidate
 
-# Host-local tool: no Docker image. gitleaks is distributed as a static binary
-# and is run directly against the local clone. Recorded here for parity with the
-# container-backed adapters' ``IMAGE`` symbol; see ``notes`` for the choice.
-IMAGE: Optional[str] = None
+# Official gitleaks image. Pulled locally via docker/pull-images.sh; the adapter
+# never pulls at scan time (runtime uses --pull=never).
+IMAGE = "zricethezav/gitleaks:latest"
 GITLEAKS_RULEID_CWE = "CWE-798"  # Use of Hard-coded Credentials
 
 _FIXTURE = (Path(__file__).resolve().parents[3]
@@ -54,9 +49,8 @@ def _findings(data) -> list:
 def parse(raw: str, target: str) -> List[Candidate]:
     """Turn a gitleaks JSON report into CWE-798 hard-coded-credential candidates.
 
-    Tolerant of empty/blank input (returns ``[]``). Reads the ``RuleID``,
-    ``File``/``StartLine``, ``Commit`` and ``Secret`` fields of each finding; the
-    secret itself is redacted to a length so it never leaks into a candidate.
+    Tolerant of empty/blank input (returns ``[]``). The secret itself is redacted
+    to a length so it never leaks into a candidate.
     """
     data = json.loads(raw) if raw.strip() else []
     out: List[Candidate] = []
@@ -87,84 +81,33 @@ def parse(raw: str, target: str) -> List[Candidate]:
     return out
 
 
-class ForensicsHostTool:
-    """Host-local git-history secret scanner (no container).
+class ForensicsDockerTool(DockerBackedTool):
+    """gitleaks in a local container; target mounted read-only, no network.
 
-    ``available()`` is true when ``git`` is on PATH (the minimum to have a local
-    clone to mine); the live scan additionally shells out to ``gitleaks``.
-    ``run()`` mirrors :class:`~aegis.tools.base.DockerBackedTool`: a missing
-    binary degrades to ``UNAVAILABLE`` and any failure to ``ERROR`` — it never
-    raises.
+    The target repo is read-only inside the container and the container has no
+    network, so a malicious repo cannot execute on or exfiltrate from the host.
     """
 
     name = "forensics"
     kind = ToolKind.STATIC
-    requires_binary = "git"
-    scanner_binary = "gitleaks"
-    timeout_s = 120.0
-
-    def __init__(self, parser=parse) -> None:
-        self._parser = parser
-
-    def available(self) -> bool:
-        return shutil.which(self.requires_binary) is not None
+    image = IMAGE
 
     def argv(self, target: str, **opts) -> Sequence[str]:
-        # Scan the full history of the local clone and stream a JSON report to
-        # stdout. ``detect`` walks commits; ``--no-git`` could scan a plain tree,
-        # but forensics wants history, so we keep git mode. Local-only: gitleaks
-        # performs no network I/O.
-        return [self.scanner_binary, "detect",
-                "--source", target,
-                "--report-format", "json",
-                "--report-path", "/dev/stdout",
+        # Entrypoint is `gitleaks`; scan the mounted repo history, redact secret
+        # values in the report, and stream JSON to stdout. --exit-code 0 so a
+        # "leaks found" run is not treated as a tool failure.
+        return ["detect", "--source", self.container_workdir,
+                "--report-format", "json", "--report-path", "/dev/stdout",
                 "--redact", "--no-banner", "--exit-code", "0"]
 
-    def run(self, target: str, **opts) -> ToolResult:
-        t0 = time.perf_counter()
-        if not self.available():
-            return ToolResult(
-                self.name, ToolStatus.UNAVAILABLE, target=target,
-                errors=[f"{self.requires_binary!r} not found on PATH; install it "
-                        "locally or use the fixture adapter"])
-        try:
-            cr = runtime.run_local(self.argv(target, **opts),
-                                   timeout_s=self.timeout_s, cwd=target)
-            raw = cr.stdout + (("\n[stderr]\n" + cr.stderr) if cr.stderr else "")
-            cands = self._parser(cr.stdout, target)
-            for c in cands:
-                c.metadata.setdefault("tool", self.name)
-            status = ToolStatus.OK if not cr.timed_out else ToolStatus.ERROR
-            errors = ["timed out"] if cr.timed_out else []
-            return ToolResult(
-                self.name, status, candidates=cands, raw=raw, target=target,
-                errors=errors,
-                metadata={"exit": cr.exit_code,
-                          "scanner": self.scanner_binary,
-                          "scanner_present": shutil.which(self.scanner_binary) is not None},
-                duration_ms=(time.perf_counter() - t0) * 1000.0)
-        except Exception as exc:  # degrade, never raise
-            return ToolResult(self.name, ToolStatus.ERROR, target=target,
-                              errors=[f"{type(exc).__name__}: {exc}"],
-                              duration_ms=(time.perf_counter() - t0) * 1000.0)
+
+def make_docker() -> ForensicsDockerTool:
+    return ForensicsDockerTool(parser=parse)
 
 
-def make_host() -> ForensicsHostTool:
-    """The live host adapter (runs gitleaks over the local clone)."""
-    return ForensicsHostTool(parser=parse)
-
-
-# Alias so callers that expect the Docker factory name still get a runnable tool.
-make_docker = make_host
-
-
-def make_fixture():
-    from aegis.tools.base import FixtureTool
+def make_fixture() -> FixtureTool:
     return FixtureTool("forensics", ToolKind.STATIC, _FIXTURE, parse,
-                       requires_binary="git")
+                       requires_binary="docker")
 
 
-__all__ = [
-    "IMAGE", "parse", "ForensicsHostTool", "make_host", "make_docker",
-    "make_fixture",
-]
+__all__ = ["IMAGE", "parse", "ForensicsDockerTool", "make_docker", "make_fixture"]
