@@ -283,6 +283,14 @@ def test_url_path_param_and_backslash_refused():
     assert not s.is_in_scope("http://target.htb/app\\x")                # backslash path
 
 
+def test_url_encoded_separators_refused():
+    s = _scope(urls=["http://target.htb/app/"])
+    assert s.is_in_scope("http://target.htb/app/login")       # clean still ok
+    assert not s.is_in_scope("http://target.htb/app%2f..%2fadmin")  # encoded '/'
+    assert not s.is_in_scope("http://target.htb/app/%2e%2e/x")      # encoded '.'
+    assert not s.is_in_scope("http://target.htb/app/%5cwin")        # encoded '\'
+
+
 def test_bracketed_host_must_be_valid_ipv6():
     s = _scope(hosts=["::1"])
     assert s.is_in_scope("[::1]") and s.is_in_scope("[::1]:8080")
