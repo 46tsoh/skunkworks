@@ -8,7 +8,8 @@ on:
 jobs:
   python-tests:
     name: pytest (py${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    # ubuntu-22.04 ships prebuilt CPython 3.9 (ubuntu-latest / 26.04 does not).
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
