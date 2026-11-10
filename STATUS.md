@@ -23,7 +23,10 @@ Both engines carry a generative planner and emit a Strix-style per-agent
 outputs, typed decisions, inter-agent messages, filed findings). The dynamic
 engine spawns subagents at run time (one per confirmed-exploitable finding); the
 static engine runs a RAPTOR-style **researcher** that scores and investigates the
-hypothesis queue. The orchestrator owns one shared event sink, so the report
+hypothesis queue. With `--use-tools` the dynamic agent **selects the real tool
+adapters** (recon/web/dast/proxy/browser/… each a selectable action), so the
+transcript shows genuine adapter calls with their name, args and status; tools run
+once and are cached for the agent to reveal in order. The orchestrator owns one shared event sink, so the report
 carries a single unified transcript across both engines (two roots: coordinator +
 researcher), streamed to `events.jsonl` and tailed live by the dashboard. Verified live against a LiteLLM gateway: `full-llm`
 (86 `llm-judge` decisions) and `llm+decision` (91 `jev` decisions, Claude

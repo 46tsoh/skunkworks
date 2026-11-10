@@ -133,6 +133,23 @@ def test_orchestrator_unifies_transcript_across_engines():
     assert "coordinator" in roles and "researcher" in roles
 
 
+def test_dynamic_engine_selects_real_tools_with_registry():
+    """With a registry, the agent selects real tool adapters (RegistryProbe):
+    tool calls carry the actual tool name + args, run once (no double-exec)."""
+    from aegis.engines.events import EventSink
+    from aegis.tools import default_registry
+    e = DynamicEngine(registry=default_registry(), event_sink=EventSink())
+    kb = KnowledgeBase()
+    # seed (orchestrator step) then run — tools must execute once, cached between
+    cands = list(e.enumerate_candidates("", AegisConfig()))
+    report = e.run("", kb, _router_for([e]), AegisConfig())
+    calls = [ev for ev in report.extra["transcript"] if ev["type"] == "tool_call"]
+    names = {c["tool"] for c in calls}
+    # real dynamic adapter names appear (not the generic sample probe)
+    assert "recon" in names and "recon.probe" not in names
+    assert all("target" in c["args"] for c in calls)
+
+
 def test_event_sink_streams_jsonl(tmp_path):
     from aegis.engines.events import EventSink
     path = tmp_path / "events.jsonl"
