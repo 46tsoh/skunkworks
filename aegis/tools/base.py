@@ -157,6 +157,11 @@ class DockerBackedTool:
     # Tools that read a mounted target (vs. a URL) set this so a missing/
     # unmountable target is ERROR rather than a meaningless empty scan.
     requires_target_mount = False
+    # Only remote network scanners (recon/web/dast) may ever run with the
+    # network enabled. Everything else — especially code-executing tools
+    # (sandbox/shell/poc) — is refused a network grant so `aegis scan` can never
+    # turn a local sandbox into a network-reaching one (isolation bypass).
+    allows_network = False
 
     def __init__(self, parser: Parser) -> None:
         self._parser = parser
@@ -184,15 +189,31 @@ class DockerBackedTool:
                 self.name, ToolStatus.UNAVAILABLE, target=target,
                 errors=[f"image {self.image!r} not present; build/pull it "
                         "locally (see docker/README.md) or use the fixture"])
-        mounts = self.mounts(target)
-        if self.requires_target_mount and not mounts:
+        # A network grant is only ever allowed for remote-scanner tools, and
+        # never alongside a local mount (don't expose local files to a
+        # network-reaching container).
+        if network != "none":
+            if not self.allows_network:
+                return ToolResult(
+                    self.name, ToolStatus.ERROR, target=target,
+                    errors=[f"tool {self.name!r} is not a network scanner; "
+                            "refusing a network grant (isolation)"],
+                    duration_ms=(time.perf_counter() - t0) * 1000.0)
+            if Path(target).exists():
+                return ToolResult(
+                    self.name, ToolStatus.ERROR, target=target,
+                    errors=["refusing a network scan of a target that resolves "
+                            "to a local path (ambiguous mount vs. host)"],
+                    duration_ms=(time.perf_counter() - t0) * 1000.0)
+            mounts = []  # never mount local files into a networked container
+        else:
+            mounts = self.mounts(target)
+        if self.requires_target_mount and not mounts and network == "none":
             return ToolResult(
                 self.name, ToolStatus.ERROR, target=target,
                 errors=[f"target {target!r} not found / not mountable"],
                 duration_ms=(time.perf_counter() - t0) * 1000.0)
         try:
-            # network defaults to "none" (local-only isolation). An authorized
-            # external scan passes network="bridge" explicitly (see `aegis scan`).
             cr = run_container(self.image, self.argv(target, **opts),
                                mounts=mounts, workdir=self.container_workdir,
                                timeout_s=self.timeout_s, network=network)

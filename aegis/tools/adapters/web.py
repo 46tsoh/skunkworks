@@ -67,6 +67,7 @@ def parse(raw: str, target: str) -> List[Candidate]:
 class WebDockerTool(DockerBackedTool):
     name = "web"
     kind = ToolKind.DYNAMIC
+    allows_network = True  # remote web scanner (nuclei)
     image = IMAGE
 
     def argv(self, target: str, **opts):

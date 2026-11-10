@@ -182,6 +182,16 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         print(f"tool {args.tool!r} has no live Docker adapter available "
               f"(image not pulled?); see `aegis tools`", file=sys.stderr)
         return 2
+    if not getattr(tool, "allows_network", False):
+        print(f"tool {args.tool!r} is not a remote scanner; `aegis scan` only "
+              f"runs network scanners (recon/web/dast) against external "
+              f"targets, never local-execution tools.", file=sys.stderr)
+        return 2
+    from pathlib import Path as _Path
+    if _Path(args.target).exists():
+        print(f"refusing: target {args.target!r} resolves to a local path; "
+              f"`aegis scan` is for external hosts/URLs.", file=sys.stderr)
+        return 2
 
     print(f"[authorized scan] {args.tool} → {args.target}  (network enabled)")
     # Pass the target under every arg name adapters read (host/url); extras are
