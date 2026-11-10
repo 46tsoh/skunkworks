@@ -122,31 +122,33 @@ def _eff_port(parsed) -> Optional[int]:
 
 
 def _norm_path(path: str):
-    """Decode once and resolve dot-segments to a segment list, or None if the
-    path is ambiguous (a parser differential a server might read differently).
+    """Return clean path segments, or None to REFUSE an ambiguous path.
 
-    Refuses: a backslash (may be read as '/'), a residual '%' after one decode
-    (double-encoding like ``%252e``), a ';' path parameter, and any segment that
-    starts with ``..`` (so ``..``, ``...`` and ``..%00`` can't sneak past).
-    Returns segments (no empties) otherwise, so the prefix check is segment-wise.
+    We refuse rather than normalize, so the bytes we validated are the bytes a
+    request would send (no normalization gap a server could read differently).
+    Refused: a backslash or ';' (raw or decoded), an encoded separator or dot
+    (``%2f``/``%5c``/``%2e``, any case), a residual '%' after one strict decode
+    (double-encoding), and any ``.`` or ``..``(-prefixed) segment raw or decoded.
     """
     from urllib.parse import unquote
     raw = path or ""
-    if "\\" in raw:
+    low = raw.lower()
+    if "\\" in raw or ";" in raw:
         return None
-    decoded = unquote(raw)
-    if "%" in decoded or ";" in decoded:
-        return None  # double-encoding or a path parameter → ambiguous
+    if "%2f" in low or "%5c" in low or "%2e" in low:
+        return None  # encoded '/', '\' or '.' → structural smuggling
+    try:
+        decoded = unquote(raw, errors="strict")
+    except (UnicodeDecodeError, ValueError):
+        return None
+    if "\\" in decoded or ";" in decoded or "%" in decoded:
+        return None  # backslash/param after decode, or double-encoding
     out: List[str] = []
-    for seg in decoded.split("/"):
-        if seg in ("", "."):
+    for seg in raw.split("/"):
+        if seg == "":
             continue
-        if seg == "..":
-            if out:
-                out.pop()
-            continue
-        if seg.startswith(".."):
-            return None  # conservative: refuse ..-prefixed segments
+        if seg == "." or seg.startswith(".."):
+            return None  # no dot-segments at all (refuse, don't resolve)
         out.append(seg)
     return out
 
