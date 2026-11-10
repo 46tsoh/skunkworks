@@ -90,25 +90,49 @@ class ToolResult:
 Parser = Callable[[str, str], List[Candidate]]
 
 
-def _read_report_file(path: Path) -> str:
-    """Read a tool's report file, refusing to follow a symlink.
+# A scanner report far larger than this is treated as an error rather than
+# read into memory (a defense against a planted oversize/endless file).
+_MAX_REPORT_BYTES = 64 * 1024 * 1024
 
-    The report lives in a scratch dir that the scanning container writes to. We
-    open with ``O_NOFOLLOW`` and require a regular file, so a planted symlink at
-    the report path can never redirect the read to an arbitrary file on the
-    host. Any absence/irregularity yields ``""`` (parsed as "no findings").
+
+def _read_report_file(path: Path) -> str:
+    """Read a tool's report file safely.
+
+    The report lives in a scratch dir the scanning container writes to, so the
+    read is hardened against a planted special file:
+
+    * ``O_NOFOLLOW`` — a symlink at the report path is refused (no redirect to
+      an arbitrary host file).
+    * ``O_NONBLOCK`` — opening a FIFO/device returns immediately instead of
+      hanging forever waiting for a writer (DoS); we then require a regular file
+      via ``fstat`` and bail otherwise.
+    * a size cap — a report over ``_MAX_REPORT_BYTES`` is rejected, not slurped.
+
+    Any absence/irregularity/oversize yields ``""`` (parsed as "no findings").
     """
     try:
-        fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)
+        fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError:
         return ""  # missing, or a symlink (ELOOP) — refuse either way
-    with os.fdopen(fd, "r", encoding="utf-8") as fh:
-        try:
-            if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
-                return ""
-            return fh.read()
-        except OSError:
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            return ""  # FIFO/device/dir — refuse (open did not block: O_NONBLOCK)
+        if st.st_size > _MAX_REPORT_BYTES:
             return ""
+        chunks = []
+        remaining = _MAX_REPORT_BYTES
+        while remaining > 0:
+            block = os.read(fd, min(1 << 20, remaining))
+            if not block:
+                break  # EOF
+            chunks.append(block)
+            remaining -= len(block)
+        return b"".join(chunks).decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+    finally:
+        os.close(fd)
 
 
 @runtime_checkable

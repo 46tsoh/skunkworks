@@ -124,6 +124,27 @@ def test_read_report_refuses_symlink(tmp_path):
     assert base._read_report_file(tmp_path / "missing.json") == ""
 
 
+def test_read_report_refuses_fifo_without_hanging(tmp_path):
+    """A planted FIFO must not hang the open (O_NONBLOCK) and must be refused
+    as a non-regular file — no reader/writer deadlock DoS."""
+    import aegis.tools.base as base
+    fifo = tmp_path / "report.json"
+    os.mkfifo(fifo)
+    # With no writer attached, a blocking open would hang forever; this returns.
+    assert base._read_report_file(fifo) == ""
+
+
+def test_read_report_rejects_oversize(tmp_path, monkeypatch):
+    import aegis.tools.base as base
+    monkeypatch.setattr(base, "_MAX_REPORT_BYTES", 8)
+    big = tmp_path / "big.json"
+    big.write_text("x" * 64)
+    assert base._read_report_file(big) == ""          # over the cap → refused
+    ok = tmp_path / "ok.json"
+    ok.write_text("tiny")
+    assert base._read_report_file(ok) == "tiny"
+
+
 def test_report_scratch_dir_shielded_by_private_parent(monkeypatch):
     """The writable mount dir lives inside a 0700 parent we own, so no other
     local user can traverse into it even though it is group/other-writable."""
