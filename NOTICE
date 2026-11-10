@@ -1,0 +1,40 @@
+Aegis
+Copyright (c) 2026 skunkworks
+
+This product is original work. It is a clean-room reimplementation: its design
+is informed by reading two open-source security-analysis frameworks, but it
+contains no code copied, pasted, or vendored from them. Each subsystem is
+specified in our own words under docs/specs/ and implemented from that spec.
+
+Derived patterns are credited below. Credit here acknowledges influence on
+architecture and behavior; it does not imply any shared source code.
+
+--------------------------------------------------------------------------------
+Strix — https://github.com/usestrix/strix (Apache-2.0)
+--------------------------------------------------------------------------------
+Patterns whose *shape* informed Aegis:
+  * Graph-of-agents multi-agent orchestration (dynamic engine, M2).
+  * Findings knowledge base with CVSS scoring and OWASP classification.
+  * LLM-style deduplication of findings (same-underlying-vulnerability check).
+  * True-positive triage before expensive write-up/PoC work.
+  * SKILL.md / MCP-server extension points.
+
+--------------------------------------------------------------------------------
+RAPTOR — https://github.com/gadievron/raptor (MIT)
+--------------------------------------------------------------------------------
+Patterns whose *shape* informed Aegis:
+  * Hypothesis-driven audit engine (evidence + coverage + posterior/verdict).
+  * Staged /validate exploitability gate chain (short-circuiting).
+  * Wrappers for Semgrep / CodeQL (+ SMT path-feasibility), SCA, binary
+    analysis, fuzzing, crash analysis, dynamic instrumentation, web testing.
+  * Specialist personas and a labeled regression corpus with calibration.
+  * Per-run cost caps and a credential-holding dispatcher; a mechanical
+    --no-llm mode.
+
+--------------------------------------------------------------------------------
+Jev / TypeSafe AI — typed "System One" decision model
+--------------------------------------------------------------------------------
+The typed-decision concept (choose / score / boolean with a probability)
+informed the aegis.decision layer's interface. Aegis depends on no vendor:
+JevBackend is one optional backend among several, and Aegis runs fully offline
+with StaticBackend or against a localhost model server with BasalOmniBackend.

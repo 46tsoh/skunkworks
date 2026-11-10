@@ -1,21 +1,55 @@
-# skunkworks
+# skunkworks — Aegis
 
-## Jev × security-agent integration (research + reference)
+**Aegis** is a unified, **local-only** security-analysis framework. It
+reimplements, in original clean-room code, the decision-shaped patterns of two
+open-source frameworks — **Strix** (dynamic security testing) and **RAPTOR**
+(static/deep security research) — and runs them through one typed decision
+layer, into one shared findings knowledge base, toward one unified report and
+dashboard.
 
-Research into integrating TypeSafe's **Jev** decision model with the
-open-source security-analysis frameworks **Strix** and **RAPTOR** — scoped to
-*pure engineering / code improvements* (cost, latency, testability), not
-offensive use.
+> **Defensive engineering, local-only.** Aegis builds tooling, orchestration,
+> analysis and UI. Capabilities run only against the bundled sample target and
+> user-authorized/owned targets — never third-party targets. Nothing is hosted
+> or sent to a third-party service: decision backends are offline (`static`) or
+> localhost (`basal`); the remote `jev` backend is refused unless egress is
+> explicitly enabled.
 
-- **Research note:** [`docs/jev-security-agent-integration.md`](docs/jev-security-agent-integration.md)
-- **Reference implementation:** [`reference/jev/`](reference/jev/) — a
-  provider-agnostic typed-decision layer with offline tests.
-- **POC:** [`poc/`](poc/) — a runnable pipeline that recreates Strix + RAPTOR
-  decision patterns (triage, hypothesis posterior, dedup, staged exploitability
-  validation, CVSS) with every decision routed through the decision model.
+## Quick start
 
 ```bash
-python -m unittest discover -s reference/jev/tests   # decision layer
-python -m unittest discover -s poc/tests             # POC pipeline
-python -m poc.cli                                    # run the demo
+python -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+
+.venv/bin/aegis analyze                 # run the pipeline on the sample corpus
+.venv/bin/aegis analyze --out ./run     # also write report.json + decisions.jsonl
+.venv/bin/pytest --cov=aegis            # 69 passing, ~93% coverage
 ```
+
+## Package layout
+
+- **`aegis/decision/`** — provider-agnostic typed-decision layer: one
+  observable `DecisionRouter` over `choose` / `score` / `boolean` primitives,
+  with Jev / basal-omni / LLM-judge / static backends and Strix/RAPTOR
+  integration adapters.
+- **`aegis/knowledge/`** — the unified `Candidate` / `Finding` / `Rejection`
+  model (CVSS + CWE→OWASP) and the shared `KnowledgeBase` (rank / query / merge).
+- **`aegis/config.py`** — thresholds, backend selection, env loading, and the
+  `local_only` guard.
+- **`aegis/analysis/`** — the combined pipeline: triage → hypothesis posterior →
+  dedupe → staged exploitability validation → CVSS, every decision routed
+  through the decision layer.
+- **`aegis/cli.py`** — the `aegis` command.
+
+`reference/jev/` and `poc/` remain as the original research artifacts; they are
+now thin compatibility shims that re-export from `aegis` (single source of
+truth), and their original test suites still pass through the shims.
+
+## Documentation
+
+- **Build status & milestones:** [`STATUS.md`](STATUS.md)
+- **Architecture map (read first):** [`docs/continuation-architecture-map.md`](docs/continuation-architecture-map.md)
+- **Decision-layer design rationale:** [`docs/jev-security-agent-integration.md`](docs/jev-security-agent-integration.md)
+- **Subsystem specs (clean-room, grows per milestone):** `docs/specs/`
+- **Upstream credits:** [`NOTICE`](NOTICE)
+
+Licensed under Apache-2.0.
