@@ -93,3 +93,34 @@
 {"seq": 93, "agent_id": "a0004", "type": "status", "status": "completed"}
 {"seq": 94, "agent_id": "a0005", "type": "status", "status": "completed"}
 {"seq": 95, "agent_id": "a0006", "type": "status", "status": "completed"}
+{"seq": 96, "agent_id": "s0001", "type": "spawn", "role": "researcher", "task": "hypothesis-driven static audit", "parent_id": null}
+{"seq": 97, "agent_id": "s0001", "type": "status", "status": "running"}
+{"seq": 98, "agent_id": "s0001", "type": "decision", "kind": "hypothesis.priority", "outcome": "8.5/10", "probability": null, "backend": "hint"}
+{"seq": 99, "agent_id": "s0001", "type": "decision", "kind": "hypothesis.priority", "outcome": "3.0/10", "probability": null, "backend": "hint"}
+{"seq": 100, "agent_id": "s0001", "type": "decision", "kind": "hypothesis.priority", "outcome": "7.0/10", "probability": null, "backend": "hint"}
+{"seq": 101, "agent_id": "s0001", "type": "decision", "kind": "hypothesis.priority", "outcome": "8.0/10", "probability": null, "backend": "hint"}
+{"seq": 102, "agent_id": "s0001", "type": "assistant", "text": "Researcher: investigate Unsanitized SQL in authentication query."}
+{"seq": 103, "agent_id": "s0001", "type": "think", "text": "state \u2014 Unsanitized SQL in authentication query (CWE-89) in api/auth/login.py:42, priority 8.5/10"}
+{"seq": 104, "agent_id": "s0001", "type": "tool_call", "tool": "static:hint", "args": {"component": "api/auth/login.py:42", "ref": "S1"}}
+{"seq": 105, "agent_id": "s0001", "type": "tool_output", "tool": "static:hint", "status": "ok", "summary": "2 evidence item(s)", "count": 2}
+{"seq": 106, "agent_id": "s0001", "type": "decision", "kind": "triage.true_positive", "outcome": "true_positive"}
+{"seq": 107, "agent_id": "s0001", "type": "finding", "id": "S1", "title": "Unsanitized SQL in authentication query", "severity": "Critical", "exploitable": true}
+{"seq": 108, "agent_id": "s0001", "type": "assistant", "text": "Researcher: investigate Weak hashing of stored passwords (unsalted SHA-1)."}
+{"seq": 109, "agent_id": "s0001", "type": "think", "text": "state \u2014 Weak hashing of stored passwords (unsalted SHA-1) (CWE-327) in api/auth/hashing.py:19, priority 8.0/10"}
+{"seq": 110, "agent_id": "s0001", "type": "tool_call", "tool": "static:hint", "args": {"component": "api/auth/hashing.py:19", "ref": "S4"}}
+{"seq": 111, "agent_id": "s0001", "type": "tool_output", "tool": "static:hint", "status": "ok", "summary": "2 evidence item(s)", "count": 2}
+{"seq": 112, "agent_id": "s0001", "type": "decision", "kind": "triage.true_positive", "outcome": "true_positive"}
+{"seq": 113, "agent_id": "s0001", "type": "finding", "id": "S4", "title": "Weak hashing of stored passwords (unsalted SHA-1)", "severity": "Medium", "exploitable": true}
+{"seq": 114, "agent_id": "s0001", "type": "assistant", "text": "Researcher: investigate Buffer over-read in log line parser."}
+{"seq": 115, "agent_id": "s0001", "type": "think", "text": "state \u2014 Buffer over-read in log line parser (CWE-125) in native/logparse.c:88, priority 7.0/10"}
+{"seq": 116, "agent_id": "s0001", "type": "tool_call", "tool": "static:hint", "args": {"component": "native/logparse.c:88", "ref": "S3"}}
+{"seq": 117, "agent_id": "s0001", "type": "tool_output", "tool": "static:hint", "status": "ok", "summary": "3 evidence item(s)", "count": 3}
+{"seq": 118, "agent_id": "s0001", "type": "decision", "kind": "triage.true_positive", "outcome": "true_positive"}
+{"seq": 119, "agent_id": "s0001", "type": "finding", "id": "S3", "title": "Buffer over-read in log line parser", "severity": "Low", "exploitable": false}
+{"seq": 120, "agent_id": "s0001", "type": "assistant", "text": "Researcher: investigate Possible hardcoded secret in config loader."}
+{"seq": 121, "agent_id": "s0001", "type": "think", "text": "state \u2014 Possible hardcoded secret in config loader (CWE-798) in config/loader.py:10, priority 3.0/10"}
+{"seq": 122, "agent_id": "s0001", "type": "tool_call", "tool": "static:hint", "args": {"component": "config/loader.py:10", "ref": "S2"}}
+{"seq": 123, "agent_id": "s0001", "type": "tool_output", "tool": "static:hint", "status": "ok", "summary": "2 evidence item(s)", "count": 2}
+{"seq": 124, "agent_id": "s0001", "type": "decision", "kind": "triage.true_positive", "outcome": "false_positive"}
+{"seq": 125, "agent_id": "s0001", "type": "status", "status": "completed"}
+{"seq": 126, "agent_id": "s0001", "type": "finish", "summary": "3 hypotheses confirmed"}

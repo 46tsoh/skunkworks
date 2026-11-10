@@ -80,14 +80,34 @@ class StaticEngine:
 
     def __init__(self, providers: Optional[Sequence] = None,
                  priority_min: float = 0.0, registry=None,
-                 tool_names: Optional[Sequence[str]] = None) -> None:
+                 tool_names: Optional[Sequence[str]] = None,
+                 planner=None, event_sink=None) -> None:
         self._providers = list(providers) if providers else [HintEvidenceProvider()]
         self._priority_min = priority_min
         self._registry = registry
         self._tool_names = tool_names
         self._tool_runs: list = []
+        self._planner = planner
+        from aegis.engines.events import NullSink
+        self._events = event_sink or NullSink()
         self.hypotheses: List[Hypothesis] = []
         self.coverage = CoverageLedger()
+
+    def set_planner(self, planner) -> None:
+        self._planner = planner
+
+    def set_event_sink(self, sink) -> None:
+        self._events = sink
+
+    def _turn(self, task: str, state: str) -> dict:
+        """One researcher turn: generative when a planner is present, else a
+        deterministic scripted narration (keeps offline runs reproducible)."""
+        if self._planner is not None:
+            from aegis.llm import agent_turn
+            return agent_turn(self._planner, "researcher", task, state,
+                              ["investigate this hypothesis", "defer"])
+        return {"assistant": f"Researcher: {task}.",
+                "think": f"state — {state}", "action_index": 0, "rationale": ""}
 
     def available(self) -> bool:
         return True
@@ -110,6 +130,12 @@ class StaticEngine:
         t0 = time.perf_counter()
         candidates = list(self.enumerate_candidates(target, config))
 
+        # A single RAPTOR-style researcher agent works the hypothesis queue.
+        ev = self._events
+        ev.emit("s0001", "spawn", role="researcher",
+                task="hypothesis-driven static audit", parent_id=None)
+        ev.emit("s0001", "status", status="running")
+
         # Seed hypotheses, each scored for priority (a typed score decision).
         self.hypotheses = []
         self.coverage = CoverageLedger()
@@ -117,12 +143,16 @@ class StaticEngine:
                         "validated_exploitable": 0, "validated_informational": 0,
                         "priority": 0}
         for seq, cand in enumerate(candidates):
-            priority = router.score(
+            score = router.score(
                 "static.hypothesis.priority",
                 f"Rate how worth investigating this hypothesis is: "
                 f"{cand.title} ({cand.cwe}) in {cand.component}. [ref={cand.id}]",
                 0.0, 10.0,
-            ).value
+            )
+            priority = score.value
+            ev.emit("s0001", "decision", kind="hypothesis.priority",
+                    outcome=f"{priority:.1f}/10", probability=None,
+                    backend=score.backend)
             hyp = Hypothesis(cand, seq, priority)
             if priority < self._priority_min:
                 kb.add_rejection(cand, "priority", f"priority {priority:.2f} below floor")
@@ -138,12 +168,27 @@ class StaticEngine:
 
         for hyp in queue:
             cand = hyp.candidate
-            # Gather + record evidence/coverage.
+            # The researcher takes a generative turn on this hypothesis.
+            turn = self._turn(f"investigate {cand.title}",
+                              f"{cand.title} ({cand.cwe}) in {cand.component}, "
+                              f"priority {hyp.priority:.1f}/10")
+            ev.emit("s0001", "assistant", text=turn["assistant"])
+            if turn["think"]:
+                ev.emit("s0001", "think", text=turn["think"])
+            # Gather + record evidence/coverage (a tool call, with arguments).
             for provider in self._providers:
-                provider.gather(hyp)
+                ev.emit("s0001", "tool_call", tool=provider.name,
+                        args={"component": cand.component, "ref": cand.id})
+                evidence = provider.gather(hyp)
                 self.coverage.mark(cand.component, provider.name)
+                ev.emit("s0001", "tool_output", tool=provider.name, status="ok",
+                        summary=f"{len(evidence)} evidence item(s)",
+                        count=len(evidence))
             # Triage gate.
-            if not is_true_positive(router, cand):
+            tp = is_true_positive(router, cand)
+            ev.emit("s0001", "decision", kind="triage.true_positive",
+                    outcome="true_positive" if tp else "false_positive")
+            if not tp:
                 kb.add_rejection(cand, "triage", "likely false positive")
                 hyp.status = HypothesisStatus.REJECTED
                 stage_counts["triage"] += 1
@@ -152,16 +197,31 @@ class StaticEngine:
             outcome = promote_candidate(router, cand, kb.accepted,
                                         config.posterior_min)
             if outcome.finding is not None:
+                # The researcher writes why it matters (generative modes).
+                if self._planner is not None:
+                    from aegis.llm import explain_finding
+                    rationale = explain_finding(self._planner, cand.title,
+                                                cand.evidence)
+                    if rationale:
+                        outcome.finding.rationale = rationale
                 kb.add_finding(outcome.finding)
                 hyp.status = HypothesisStatus.ACCEPTED
                 key = ("validated_exploitable" if outcome.exploitable
                        else "validated_informational")
                 stage_counts[key] += 1
+                if outcome.finding.rationale:
+                    ev.emit("s0001", "assistant", text=outcome.finding.rationale)
+                ev.emit("s0001", "finding", id=cand.id, title=cand.title,
+                        severity=outcome.finding.severity,
+                        exploitable=outcome.exploitable)
             else:
                 kb.rejected.append(outcome.rejection)
                 hyp.status = HypothesisStatus.REJECTED
                 stage_counts[outcome.stage] += 1
 
+        ev.emit("s0001", "status", status="completed")
+        ev.emit("s0001", "finish",
+                summary=f"{len([h for h in self.hypotheses if h.status.value == 'accepted'])} hypotheses confirmed")
         kb.rank()
         return EngineReport(
             name=self.name, kind=self.kind, available=True, ran=True,

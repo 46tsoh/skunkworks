@@ -18,9 +18,14 @@ alone:
   makes the typed `choose`/`score`/`boolean` calls.
 - **static** — fully offline/deterministic (tests, CI, no network).
 
-The generative planner lives in the dynamic (graph-of-agents) engine: each step
-it proposes the next action + reasoning (shown in the dashboard's agent timeline)
-and the decider commits it. Verified live against a LiteLLM gateway: `full-llm`
+Both engines carry a generative planner and emit a Strix-style per-agent
+**transcript** (assistant prose, `think` notes, tool calls with arguments, tool
+outputs, typed decisions, inter-agent messages, filed findings). The dynamic
+engine spawns subagents at run time (one per confirmed-exploitable finding); the
+static engine runs a RAPTOR-style **researcher** that scores and investigates the
+hypothesis queue. The orchestrator owns one shared event sink, so the report
+carries a single unified transcript across both engines (two roots: coordinator +
+researcher), streamed to `events.jsonl` and tailed live by the dashboard. Verified live against a LiteLLM gateway: `full-llm`
 (86 `llm-judge` decisions) and `llm+decision` (91 `jev` decisions, Claude
 planning + authoring), both producing the same 5 ranked findings as the offline
 deterministic run. Remote endpoints require `--allow-egress`.

@@ -105,6 +105,34 @@ def test_dynamic_engine_emits_transcript_and_spawns_subagents():
     assert len(e.graph) == 3 + len(post)  # coordinator + recon + exploit + subs
 
 
+def test_static_engine_emits_researcher_transcript():
+    """The static engine emits a RAPTOR-style researcher transcript, symmetric
+    with the dynamic engine (priority scores, evidence tool calls, findings)."""
+    from aegis.engines.events import EventSink
+    from aegis.engines.static import StaticEngine
+    e = StaticEngine(event_sink=EventSink())
+    kb = KnowledgeBase()
+    report = e.run("", kb, _router_for([e]), AegisConfig())
+    t = report.extra.get("transcript", None)
+    # the shared sink is the source; pull the researcher's events from it
+    events = e._events.events
+    assert any(ev["type"] == "spawn" and ev["role"] == "researcher" for ev in events)
+    assert any(ev["type"] == "decision" and ev["kind"] == "hypothesis.priority"
+               for ev in events)
+    tc = next(ev for ev in events if ev["type"] == "tool_call")
+    assert "component" in tc["args"] and "ref" in tc["args"]
+    assert any(ev["type"] == "finding" for ev in events)
+
+
+def test_orchestrator_unifies_transcript_across_engines():
+    """The run report carries one transcript spanning both engines' agents."""
+    from aegis.engines import default_orchestrator
+    from aegis.engines.base import RunConfig
+    result = default_orchestrator().run(RunConfig(target="", parallel=False))
+    roles = {e["role"] for e in result.transcript if e["type"] == "spawn"}
+    assert "coordinator" in roles and "researcher" in roles
+
+
 def test_event_sink_streams_jsonl(tmp_path):
     from aegis.engines.events import EventSink
     path = tmp_path / "events.jsonl"

@@ -97,9 +97,11 @@ class RunResult:
     duration_ms: float
     decision_log_path: Optional[Path] = None
     report_path: Optional[Path] = None
+    transcript: list = field(default_factory=list)  # unified agent event stream
 
     def as_dict(self) -> dict:
         payload = self.kb.as_dict()
+        payload["transcript"] = self.transcript
         payload["run"] = {
             "run_id": self.run_id,
             "target": self.target,
@@ -311,6 +313,7 @@ class Orchestrator:
             cross_engine_dedup=cross_dedup, started_at=started,
             finished_at=finished, duration_ms=duration_ms,
             decision_log_path=decision_log_path, report_path=report_path,
+            transcript=self._event_sink.events,
         )
 
         if config.out_dir:
