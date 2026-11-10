@@ -39,3 +39,39 @@ def test_scan_refuses_without_authorization(capsys):
     assert rc == 2
     err = capsys.readouterr().err.lower()
     assert "authorized" in err and "network" in err
+
+
+def test_scan_runs_agent_loop_and_writes_dashboard(tmp_path, monkeypatch):
+    """`aegis scan --out` drives the real findings through the dynamic agent
+    loop and writes a dashboard-ready run (report + transcript + events)."""
+    import aegis.cli as cli
+    import aegis.tools as tools_mod
+    from aegis.tools.base import DockerBackedTool, ToolKind, ToolResult, ToolStatus
+    from aegis.tools.util import make_candidate
+
+    class FakeScanner(DockerBackedTool):
+        name, kind, image = "recon", ToolKind.DYNAMIC, "img:1"
+        allows_network = True
+        def argv(self, target, **o):
+            return ["nmap"]
+        def run(self, target, *, network="none", **o):  # no docker/network
+            c = make_candidate(id="recon-1", title="Exposed ssh on tcp/22",
+                               cwe="CWE-200", component=f"{target}:22",
+                               severity="low", description="open", evidence=["x"],
+                               source_engine="dynamic", tool="recon")
+            return ToolResult("recon", ToolStatus.OK, candidates=[c], target=target)
+
+    class FakeReg:
+        def get(self, name):
+            return FakeScanner(parser=lambda raw, t: [])
+
+    monkeypatch.setattr(tools_mod, "default_registry", lambda *a, **k: FakeReg())
+    out = tmp_path / "data"
+    rc = cli.main(["scan", "--target", "scanme.example", "--tool", "recon",
+                   "--authorized", "--run-id", "s1", "--out", str(out)])
+    assert rc == 0
+    report = json.loads((out / "report.json").read_text())
+    assert report["run"]["target"] == "scanme.example"
+    # the agent loop produced a transcript over the real finding
+    assert any(e["type"] == "finding" for e in report["transcript"])
+    assert (out / "events.jsonl").exists()
