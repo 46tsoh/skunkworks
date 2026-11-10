@@ -22,28 +22,11 @@ from aegis import __version__
 from aegis.analysis.backends import build_router
 from aegis.analysis.pipeline import run
 from aegis.config import AegisConfig
-from aegis.knowledge.models import Candidate
+from aegis.knowledge.loader import load_candidates  # noqa: F401  (re-exported)
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_INPUT = _REPO_ROOT / "data" / "sample_findings.json"
-
-_CANDIDATE_FIELDS = {
-    "id", "title", "cwe", "component", "cvss_vector",
-    "description", "evidence", "hints", "source_engine", "metadata",
-}
-
-
-def load_candidates(path: Path) -> list:
-    """Load candidate findings from a JSON array file."""
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
-    out = []
-    for item in data:
-        known = {k: v for k, v in item.items() if k in _CANDIDATE_FIELDS}
-        extra = {k: v for k, v in item.items() if k not in _CANDIDATE_FIELDS}
-        if extra:
-            known.setdefault("metadata", {}).update(extra)
-        out.append(Candidate(**known))
-    return out
+_DEFAULT_TARGET = _REPO_ROOT / "data" / "sample_target"
 
 
 def _print_report(kb, backend: str) -> None:
@@ -101,6 +84,47 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_run(result) -> None:
+    kb = result.kb
+    print(f"\n=== Aegis unified run ({result.run_id}, backend: {result.backend}) ===")
+    print(f"target={result.target}")
+    for r in result.engine_reports:
+        if r.ran:
+            print(f"  engine {r.name:8} [{r.kind:7}] candidates={r.candidates} "
+                  f"accepted={r.accepted} rejected={r.rejected}")
+        else:
+            print(f"  engine {r.name:8} [{r.kind:7}] SKIPPED ({r.skipped_reason or r.error})")
+    m = kb.metrics
+    print(f"cross-engine dedup collapsed {m['cross_engine_dedup']} finding(s)")
+    print(f"unified: accepted={m['accepted']} rejected={m['rejected']}  "
+          f"severity={kb.severity_counts()}  engines={kb.engine_counts()}")
+    print("\n-- Unified findings (ranked) --")
+    for f in kb.accepted:
+        flag = "EXPLOITABLE" if f.exploitable else f"info (stopped@{f.stages_passed})"
+        print(f"  [{f.severity:8} {f.cvss_score:4}] {f.id} ({f.source_engine}) "
+              f"{f.title}  {f.owasp or '-'}  {flag}")
+    print()
+
+
+def _cmd_run(args: argparse.Namespace) -> int:
+    from aegis.engines import default_orchestrator
+    from aegis.engines.base import RunConfig
+
+    log_path = (args.out / "decisions.jsonl") if args.out else None
+    aegis_cfg = AegisConfig.from_env(
+        backend=args.backend, local_only=not args.allow_egress, log_path=log_path,
+    )
+    config = RunConfig(
+        target=str(args.target), aegis=aegis_cfg,
+        parallel=not args.serial, out_dir=args.out, run_id=args.run_id,
+    )
+    result = default_orchestrator().run(config)
+    _print_run(result)
+    if args.out:
+        print(f"Wrote {result.report_path} and {log_path}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="aegis",
@@ -121,6 +145,22 @@ def build_parser() -> argparse.ArgumentParser:
     analyze.add_argument("--out", type=Path, default=None,
                          help="directory for report.json and decisions.jsonl")
     analyze.set_defaults(func=_cmd_analyze)
+
+    run_p = sub.add_parser(
+        "run", help="run BOTH engines over the sample target (unified report)")
+    run_p.add_argument("--target", type=Path, default=_DEFAULT_TARGET,
+                       help="local sample-target directory")
+    run_p.add_argument("--backend", choices=["static", "basal", "jev", "llm"],
+                       default="static", help="decision backend (default: static)")
+    run_p.add_argument("--allow-egress", action="store_true",
+                       help="permit remote backends (off by default)")
+    run_p.add_argument("--serial", action="store_true",
+                       help="run engines serially instead of in parallel")
+    run_p.add_argument("--run-id", default=None,
+                       help="fixed run id (deterministic output)")
+    run_p.add_argument("--out", type=Path, default=None,
+                       help="directory for report.json and decisions.jsonl")
+    run_p.set_defaults(func=_cmd_run)
     return parser
 
 

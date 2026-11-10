@@ -20,10 +20,27 @@ dashboard.
 python -m venv .venv
 .venv/bin/pip install -e ".[dev]"
 
-.venv/bin/aegis analyze                 # run the pipeline on the sample corpus
-.venv/bin/aegis analyze --out ./run     # also write report.json + decisions.jsonl
-.venv/bin/pytest --cov=aegis            # 69 passing, ~93% coverage
+.venv/bin/aegis analyze                 # single pipeline on the sample corpus
+.venv/bin/aegis run                     # BOTH engines over the sample target (unified report)
+.venv/bin/aegis run --backend llm       # drive decisions with a standard local LLM
+.venv/bin/aegis run --out ./run         # also write report.json + decisions.jsonl
+.venv/bin/pytest --cov=aegis            # 95 passing, ~95% coverage
 ```
+
+## Models
+
+Aegis uses models two ways — the same split Strix draws between its LLM and its
+logic:
+
+- A **standard generative LLM** (`aegis.llm`) — OpenAI-compatible, **local-first**
+  (defaults to a localhost server like Ollama / llama.cpp / vLLM). Configure with
+  `AEGIS_LLM`, `AEGIS_LLM_API_BASE`, `AEGIS_LLM_API_KEY`.
+- The **typed decision layer** (`aegis.decision`) — `choose` / `score` / `boolean`
+  with a probability, the triage/validate/dedup oracle.
+
+A standard LLM can also *be* the decision backend (`--backend llm`). Everything
+defaults to offline/localhost; the remote `jev` backend and non-localhost LLM
+endpoints are refused unless egress is explicitly enabled.
 
 ## Package layout
 

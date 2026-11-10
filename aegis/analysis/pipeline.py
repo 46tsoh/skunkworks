@@ -19,7 +19,8 @@ cached, threshold-tuned, and (with the stand-in backend) reproducible.
 
 from __future__ import annotations
 
-from typing import Sequence
+from dataclasses import dataclass
+from typing import Optional, Sequence
 
 from aegis.analysis import cvss
 from aegis.analysis.dedupe import find_duplicate
@@ -29,7 +30,53 @@ from aegis.analysis.validate import validate_exploitability
 from aegis.config import DEFAULT_POSTERIOR_MIN
 from aegis.decision import DecisionRouter
 from aegis.knowledge.base import KnowledgeBase
-from aegis.knowledge.models import Candidate, Finding
+from aegis.knowledge.models import Candidate, Finding, Rejection
+
+
+@dataclass
+class PromotionOutcome:
+    """Result of running one candidate through the post-triage decision stages."""
+
+    finding: Optional[Finding]
+    rejection: Optional[Rejection]
+    stage: str                 # "accepted" | "hypothesis" | "dedupe"
+    exploitable: Optional[bool]
+
+
+def promote_candidate(
+    router: DecisionRouter,
+    cand: Candidate,
+    accepted: Sequence[Finding],
+    posterior_min: float = DEFAULT_POSTERIOR_MIN,
+) -> PromotionOutcome:
+    """Run steps 2-5 (hypothesis -> dedupe -> validate -> score) for a candidate.
+
+    Triage (step 1) is the caller's responsibility, so both the single pipeline
+    and the engines share this one promotion path. Returns a
+    :class:`PromotionOutcome` (a Finding, or a Rejection with its stage).
+    """
+    post = hypothesis_posterior(router, cand)
+    if post < posterior_min:
+        return PromotionOutcome(
+            None, Rejection(cand, "hypothesis",
+                            f"posterior {post:.2f} < {posterior_min}"),
+            "hypothesis", None,
+        )
+    dup = find_duplicate(router, cand, accepted)
+    if dup is not None:
+        return PromotionOutcome(
+            None, Rejection(cand, "dedupe",
+                            f"duplicate of {dup.id} ({dup.title})"),
+            "dedupe", None,
+        )
+    val = validate_exploitability(router, cand)
+    score = cvss.base_score(cand.cvss_vector)
+    finding = Finding(
+        candidate=cand, posterior=post, cvss_score=score,
+        severity=cvss.severity_band(score), exploitable=val.exploitable,
+        stages_passed=val.stages_passed, failed_stage=val.failed_stage,
+    )
+    return PromotionOutcome(finding, None, "accepted", val.exploitable)
 
 
 def run(
@@ -57,44 +104,16 @@ def run(
             stage_counts["triage"] += 1
             continue
 
-        # 2. Hypothesis posterior (RAPTOR).
-        post = hypothesis_posterior(router, cand)
-        if post < posterior_min:
-            kb.add_rejection(
-                cand, "hypothesis", f"posterior {post:.2f} < {posterior_min}"
-            )
-            stage_counts["hypothesis"] += 1
-            continue
-
-        # 3. Dedupe (Strix) against already-accepted findings.
-        dup = find_duplicate(router, cand, kb.accepted)
-        if dup is not None:
-            kb.add_rejection(
-                cand, "dedupe", f"duplicate of {dup.id} ({dup.title})"
-            )
-            stage_counts["dedupe"] += 1
-            continue
-
-        # 4. Exploitability validation (RAPTOR).
-        val = validate_exploitability(router, cand)
-        if val.exploitable:
-            stage_counts["validated_exploitable"] += 1
+        # 2-5. Shared promotion path (hypothesis -> dedupe -> validate -> score).
+        outcome = promote_candidate(router, cand, kb.accepted, posterior_min)
+        if outcome.finding is not None:
+            kb.add_finding(outcome.finding)
+            key = ("validated_exploitable" if outcome.exploitable
+                   else "validated_informational")
+            stage_counts[key] += 1
         else:
-            stage_counts["validated_informational"] += 1
-
-        # 5. CVSS scoring (Strix).
-        score = cvss.base_score(cand.cvss_vector)
-        kb.add_finding(
-            Finding(
-                candidate=cand,
-                posterior=post,
-                cvss_score=score,
-                severity=cvss.severity_band(score),
-                exploitable=val.exploitable,
-                stages_passed=val.stages_passed,
-                failed_stage=val.failed_stage,
-            )
-        )
+            kb.rejected.append(outcome.rejection)
+            stage_counts[outcome.stage] += 1
 
     kb.rank()
     kb.metrics = {
@@ -109,4 +128,4 @@ def run(
     return kb
 
 
-__all__ = ["run"]
+__all__ = ["run", "promote_candidate", "PromotionOutcome"]

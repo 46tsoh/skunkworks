@@ -62,11 +62,15 @@ class AegisConfig:
     default_threshold: float = 0.5
     log_path: Optional[Path] = None
     local_only: bool = True
+    # Standard generative LLM (also usable as the 'llm' decision backend).
+    llm_model: Optional[str] = None
+    llm_api_base: Optional[str] = None
+    llm_api_key: Optional[str] = None
 
     def __post_init__(self) -> None:
-        if self.backend not in ("static", "basal", "jev"):
+        if self.backend not in ("static", "basal", "jev", "llm"):
             raise ValueError(
-                f"unknown backend {self.backend!r} (static|basal|jev)"
+                f"unknown backend {self.backend!r} (static|basal|jev|llm)"
             )
         if self.local_only and self.backend == "jev":
             raise ValueError(
@@ -104,6 +108,9 @@ class AegisConfig:
             ),
             log_path=Path(log) if log else None,
             local_only=_env_bool("AEGIS_LOCAL_ONLY", True),
+            llm_model=os.environ.get("AEGIS_LLM"),
+            llm_api_base=os.environ.get("AEGIS_LLM_API_BASE"),
+            llm_api_key=os.environ.get("AEGIS_LLM_API_KEY"),
         )
         resolved.update(overrides)
         return cls(**resolved)
