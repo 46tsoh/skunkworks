@@ -217,6 +217,21 @@ def test_browser_mounts_driver_and_target_read_only(tmp_path):
         (str(tool.DRIVER_SRC), tool.DRIVER_PATH)]
 
 
+def test_browser_single_file_target_mounts_as_index(tmp_path):
+    # A saved single page (a file, not a dir) must mount as index.html so the
+    # driver's file://<INPUT_DIR>/index.html resolves — not bind the file over
+    # the directory path (which would make the load fail).
+    tool = browser.make_docker()
+    page = tmp_path / "page.html"
+    page.write_text("<html></html>", encoding="utf-8")
+    mounts = tool.mounts(str(page))
+    assert (str(page), f"{tool.INPUT_DIR}/index.html") in mounts
+    assert (str(page), tool.INPUT_DIR) not in mounts
+    # argv still loads the index.html path for a local target
+    argv = tool.argv(str(page), report_path="/aegis/out/navlog.json")
+    assert argv[argv.index("--target") + 1] == f"file://{tool.INPUT_DIR}/index.html"
+
+
 def test_browser_ok_reads_navlog_from_report_mount(monkeypatch):
     # The navlog is read back from the writable report mount, not stdout.
     import aegis.tools.base as base

@@ -166,7 +166,11 @@ class BrowserDockerTool(DockerBackedTool):
         # which this local-only adapter does not take).
         out = [(str(self.DRIVER_SRC), self.DRIVER_PATH)]
         p = Path(target)
-        if p.exists():
+        if p.is_file():
+            # A single saved page: mount it as index.html so argv's
+            # file://<INPUT_DIR>/index.html resolves (a file can't be the dir).
+            out.append((str(p), f"{self.INPUT_DIR}/index.html"))
+        elif p.exists():
             out.append((str(p), self.INPUT_DIR))
         return out
 
