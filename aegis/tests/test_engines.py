@@ -162,6 +162,30 @@ def test_event_sink_streams_jsonl(tmp_path):
     assert len(sink.events) == 2
 
 
+def test_dynamic_engine_attributes_tokens_per_agent():
+    """Generative tokens are charged to the agent that spent them."""
+    class StubPlanner:
+        def __init__(self):
+            self.usage = {"input_tokens": 0, "output_tokens": 0, "calls": 0}
+        def complete(self, prompt):
+            self.usage["input_tokens"] += 10
+            self.usage["output_tokens"] += 5
+            self.usage["calls"] += 1
+            if "action_index" in prompt:
+                return '{"assistant":"a","think":"t","action_index":0,"rationale":"r"}'
+            return "because reasons"
+
+    e = DynamicEngine(planner=StubPlanner())
+    kb = KnowledgeBase()
+    e.run("", kb, _router_for([e]), AegisConfig())
+    by_role = {n.role.value: n.tokens for n in e.graph}
+    assert by_role["coordinator"] > 0        # planned every step
+    assert by_role["recon"] == 0             # ran tools, no generation
+    assert by_role["exploitation"] > 0       # triaged + wrote rationales
+    # tokens are attributed, not double-counted beyond the provider's total
+    assert sum(n.tokens for n in e.graph) == 15 * e._planner.usage["calls"]
+
+
 def test_dynamic_engine_without_planner_is_deterministic():
     """No planner (static mode) → no plan events, no rationale, same result."""
     e = DynamicEngine()  # planner=None

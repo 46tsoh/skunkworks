@@ -795,37 +795,43 @@
       "seq": 90,
       "agent_id": "a0001",
       "type": "status",
-      "status": "completed"
+      "status": "completed",
+      "tokens": 0
     },
     {
       "seq": 91,
       "agent_id": "a0002",
       "type": "status",
-      "status": "completed"
+      "status": "completed",
+      "tokens": 0
     },
     {
       "seq": 92,
       "agent_id": "a0003",
       "type": "status",
-      "status": "completed"
+      "status": "completed",
+      "tokens": 0
     },
     {
       "seq": 93,
       "agent_id": "a0004",
       "type": "status",
-      "status": "completed"
+      "status": "completed",
+      "tokens": 0
     },
     {
       "seq": 94,
       "agent_id": "a0005",
       "type": "status",
-      "status": "completed"
+      "status": "completed",
+      "tokens": 0
     },
     {
       "seq": 95,
       "agent_id": "a0006",
       "type": "status",
-      "status": "completed"
+      "status": "completed",
+      "tokens": 0
     },
     {
       "seq": 96,
@@ -1060,7 +1066,8 @@
       "seq": 125,
       "agent_id": "s0001",
       "type": "status",
-      "status": "completed"
+      "status": "completed",
+      "tokens": 0
     },
     {
       "seq": 126,
@@ -1090,7 +1097,7 @@
           "validated_exploitable": 3,
           "validated_informational": 0
         },
-        "duration_ms": 7.66,
+        "duration_ms": 7.76,
         "error": null,
         "extra": {
           "graph": [
@@ -1101,6 +1108,7 @@
               "parent_id": null,
               "status": "completed",
               "steps_spent": 0,
+              "tokens": 0,
               "trajectory": [
                 {
                   "seq": 1,
@@ -1174,6 +1182,7 @@
               "parent_id": "a0001",
               "status": "completed",
               "steps_spent": 4,
+              "tokens": 0,
               "trajectory": [
                 {
                   "seq": 1,
@@ -1212,6 +1221,7 @@
               "parent_id": "a0001",
               "status": "completed",
               "steps_spent": 4,
+              "tokens": 0,
               "trajectory": [
                 {
                   "seq": 5,
@@ -1250,6 +1260,7 @@
               "parent_id": "a0001",
               "status": "completed",
               "steps_spent": 1,
+              "tokens": 0,
               "trajectory": [
                 {
                   "seq": 5,
@@ -1267,6 +1278,7 @@
               "parent_id": "a0001",
               "status": "completed",
               "steps_spent": 1,
+              "tokens": 0,
               "trajectory": [
                 {
                   "seq": 6,
@@ -1284,6 +1296,7 @@
               "parent_id": "a0001",
               "status": "completed",
               "steps_spent": 1,
+              "tokens": 0,
               "trajectory": [
                 {
                   "seq": 7,
@@ -1931,37 +1944,43 @@
               "seq": 90,
               "agent_id": "a0001",
               "type": "status",
-              "status": "completed"
+              "status": "completed",
+              "tokens": 0
             },
             {
               "seq": 91,
               "agent_id": "a0002",
               "type": "status",
-              "status": "completed"
+              "status": "completed",
+              "tokens": 0
             },
             {
               "seq": 92,
               "agent_id": "a0003",
               "type": "status",
-              "status": "completed"
+              "status": "completed",
+              "tokens": 0
             },
             {
               "seq": 93,
               "agent_id": "a0004",
               "type": "status",
-              "status": "completed"
+              "status": "completed",
+              "tokens": 0
             },
             {
               "seq": 94,
               "agent_id": "a0005",
               "type": "status",
-              "status": "completed"
+              "status": "completed",
+              "tokens": 0
             },
             {
               "seq": 95,
               "agent_id": "a0006",
               "type": "status",
-              "status": "completed"
+              "status": "completed",
+              "tokens": 0
             }
           ],
           "degraded": false
@@ -1984,7 +2003,7 @@
           "validated_informational": 1,
           "priority": 0
         },
-        "duration_ms": 5.82,
+        "duration_ms": 3.41,
         "error": null,
         "extra": {
           "hypotheses": [
@@ -2028,9 +2047,9 @@
       }
     ],
     "cross_engine_dedup": 1,
-    "started_at": 1794299001.640883,
-    "finished_at": 1794299001.655591,
-    "duration_ms": 14.71,
+    "started_at": 1794301016.9798589,
+    "finished_at": 1794301016.992265,
+    "duration_ms": 12.41,
     "decision_log_path": "/Users/bobcat/Documents/git/skunkworks/ui/public/data/decisions.jsonl"
   }
 }

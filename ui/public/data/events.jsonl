@@ -87,12 +87,12 @@
 {"seq": 87, "agent_id": "a0001", "type": "think", "text": "state \u2014 You are the coordinator agent driving a defensive security test of an authorized target. Choose the next action. Keep probing every attack surface and triaging every pending lead; only choose 'finish' once there are no surfaces left to probe and no leads pending. Current state: 0 attack surface(s) not yet probed, 0 lead(s) pending triage, 3 finding(s) confirmed so far."}
 {"seq": 88, "agent_id": "a0001", "type": "decision", "kind": "route_next_action", "outcome": "finish", "probability": 1.0, "backend": "hint"}
 {"seq": 89, "agent_id": "a0001", "type": "finish", "summary": "3 finding(s) confirmed"}
-{"seq": 90, "agent_id": "a0001", "type": "status", "status": "completed"}
-{"seq": 91, "agent_id": "a0002", "type": "status", "status": "completed"}
-{"seq": 92, "agent_id": "a0003", "type": "status", "status": "completed"}
-{"seq": 93, "agent_id": "a0004", "type": "status", "status": "completed"}
-{"seq": 94, "agent_id": "a0005", "type": "status", "status": "completed"}
-{"seq": 95, "agent_id": "a0006", "type": "status", "status": "completed"}
+{"seq": 90, "agent_id": "a0001", "type": "status", "status": "completed", "tokens": 0}
+{"seq": 91, "agent_id": "a0002", "type": "status", "status": "completed", "tokens": 0}
+{"seq": 92, "agent_id": "a0003", "type": "status", "status": "completed", "tokens": 0}
+{"seq": 93, "agent_id": "a0004", "type": "status", "status": "completed", "tokens": 0}
+{"seq": 94, "agent_id": "a0005", "type": "status", "status": "completed", "tokens": 0}
+{"seq": 95, "agent_id": "a0006", "type": "status", "status": "completed", "tokens": 0}
 {"seq": 96, "agent_id": "s0001", "type": "spawn", "role": "researcher", "task": "hypothesis-driven static audit", "parent_id": null}
 {"seq": 97, "agent_id": "s0001", "type": "status", "status": "running"}
 {"seq": 98, "agent_id": "s0001", "type": "decision", "kind": "hypothesis.priority", "outcome": "8.5/10", "probability": null, "backend": "hint"}
@@ -122,5 +122,5 @@
 {"seq": 122, "agent_id": "s0001", "type": "tool_call", "tool": "static:hint", "args": {"component": "config/loader.py:10", "ref": "S2"}}
 {"seq": 123, "agent_id": "s0001", "type": "tool_output", "tool": "static:hint", "status": "ok", "summary": "2 evidence item(s)", "count": 2}
 {"seq": 124, "agent_id": "s0001", "type": "decision", "kind": "triage.true_positive", "outcome": "false_positive"}
-{"seq": 125, "agent_id": "s0001", "type": "status", "status": "completed"}
+{"seq": 125, "agent_id": "s0001", "type": "status", "status": "completed", "tokens": 0}
 {"seq": 126, "agent_id": "s0001", "type": "finish", "summary": "3 hypotheses confirmed"}

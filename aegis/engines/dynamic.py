@@ -50,6 +50,7 @@ class AgentNode:
     parent_id: Optional[str] = None
     status: AgentStatus = AgentStatus.PENDING
     steps_spent: int = 0
+    tokens: int = 0  # generative LLM tokens attributed to this agent
     # Ordered record of what this agent actually did, step by step. Each entry
     # is {"seq": int, "kind": str, "label": str, "detail": str, "tone": str}.
     trajectory: List[dict] = field(default_factory=list)
@@ -62,7 +63,8 @@ class AgentNode:
     def as_dict(self) -> dict:
         return {"id": self.id, "role": self.role.value, "task": self.task,
                 "parent_id": self.parent_id, "status": self.status.value,
-                "steps_spent": self.steps_spent, "trajectory": self.trajectory}
+                "steps_spent": self.steps_spent, "tokens": self.tokens,
+                "trajectory": self.trajectory}
 
 
 @dataclass
@@ -170,6 +172,11 @@ class DynamicEngine:
         """Inject the live transcript sink (the Orchestrator wires this in)."""
         self._events = sink
 
+    def _usage_total(self) -> int:
+        """Cumulative generative tokens so far (0 without a real planner)."""
+        u = getattr(self._planner, "usage", None)
+        return (u["input_tokens"] + u["output_tokens"]) if u else 0
+
     def _turn(self, role: str, task: str, state: str, options: Sequence[str]) -> dict:
         """One agent turn: generative when a planner is present, else a
         deterministic scripted narration (keeps offline runs reproducible)."""
@@ -262,7 +269,9 @@ class DynamicEngine:
             #    is a deterministic scripted turn, so the loop stays reproducible.
             budget.steps_spent += 1
             seq = budget.steps_spent
+            _u = self._usage_total()
             turn = self._turn("coordinator", "drive the test", state, options)
+            coordinator.tokens += self._usage_total() - _u
             ev.emit("a0001", "assistant", text=turn["assistant"])
             if turn["think"]:
                 ev.emit("a0001", "think", text=turn["think"])
@@ -313,9 +322,11 @@ class DynamicEngine:
                                 f"routed among {len(options)} options")
                 ev.emit("a0001", "message", to="a0003",
                         text=f"Confirm the lead: {cand.title}.")
+                _u = self._usage_total()
                 eturn = self._turn("exploitation", "confirm leads",
                                    f"evaluating {cand.title} ({cand.component})",
                                    ["triage this lead", "skip"])
+                exploit.tokens += self._usage_total() - _u
                 ev.emit("a0003", "assistant", text=eturn["assistant"])
                 if eturn["think"]:
                     ev.emit("a0003", "think", text=eturn["think"])
@@ -336,8 +347,10 @@ class DynamicEngine:
                     # 4. INTERPRET — the generative LLM writes why it matters.
                     if self._planner is not None:
                         from aegis.llm import explain_finding
+                        _u = self._usage_total()
                         rationale = explain_finding(
                             self._planner, cand.title, cand.evidence)
+                        exploit.tokens += self._usage_total() - _u
                         if rationale:
                             outcome.finding.rationale = rationale
                     kb.add_finding(outcome.finding)
@@ -368,9 +381,11 @@ class DynamicEngine:
                                 task=task, parent_id="a0001")
                         ev.emit(aid, "status", status="running")
                         sub.steps_spent += 1
+                        _u = self._usage_total()
                         pturn = self._turn("post_exploitation", task,
                                            f"developing a PoC for {cand.title}",
                                            ["draft the PoC", "skip"])
+                        sub.tokens += self._usage_total() - _u
                         ev.emit(aid, "assistant", text=pturn["assistant"])
                         if pturn["think"]:
                             ev.emit(aid, "think", text=pturn["think"])
@@ -399,7 +414,7 @@ class DynamicEngine:
 
         for node in self.graph:
             node.status = AgentStatus.COMPLETED
-            ev.emit(node.id, "status", status="completed")
+            ev.emit(node.id, "status", status="completed", tokens=node.tokens)
         kb.rank()
 
         return EngineReport(
