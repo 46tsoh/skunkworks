@@ -14,6 +14,10 @@ def test_sanitize_text_escapes_control_chars():
     # ESC, newline, carriage return, NUL — none may pass through raw
     assert sanitize_text("ok\x1b[31mred\n\r\x00") == "ok\\x1b[31mred\\x0a\\x0d\\x00"
     assert sanitize_text("plain") == "plain"
+    # Unicode format/bidi/separator chars are escaped too (Trojan-Source, ZW)
+    assert sanitize_text("a‮b") == "a\\u202eb"      # right-to-left override
+    assert sanitize_text("a​b") == "a\\u200bb"      # zero-width space
+    assert sanitize_text("a b") == "a\\u2028b"      # line separator
     long = "a" * 5000
     assert sanitize_text(long, limit=10).endswith("…") and len(sanitize_text(long, 10)) == 11
 

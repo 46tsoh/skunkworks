@@ -14,7 +14,7 @@ no way to reach the network except through a scope-gated transport.
 
 from __future__ import annotations
 
-import re
+import unicodedata
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -28,20 +28,29 @@ _TIMEOUT_S = 15.0
 _MAX_BYTES = 2 * 1024 * 1024  # 2 MiB of response is plenty to verify a marker
 _USER_AGENT = "aegis-redteam/1.0"   # generic; never the operator's identity
 
-# Control characters (incl. newlines/tabs/ESC) that must never be emitted raw
-# from attacker-influenced response data — otherwise a target could inject
-# terminal escape sequences into our output or audit log.
-_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+# Unicode categories that must never be emitted raw from attacker-influenced
+# response data: C0/C1 controls (Cc, incl. newlines/tabs/ESC), format chars
+# (Cf — zero-width, bidi overrides like U+202E, BOM), and line/paragraph
+# separators (Zl/Zp — U+2028/U+2029). All can inject terminal escapes or spoof
+# output/logs (incl. Trojan-Source bidi tricks).
+_ESCAPE_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp"})
 
 
 def sanitize_text(value: str, limit: int = 2000) -> str:
-    """Escape control chars in attacker-influenced text and bound its length.
+    """Escape control/format/separator chars in attacker-influenced text.
 
     Used on anything derived from a response (evidence, proof, header values)
     before it is printed or logged, so a hostile target cannot inject terminal
-    escape sequences or spoof lines.
+    escape sequences, zero-width/bidi spoofs, or line breaks. Length-bounded.
     """
-    s = _CONTROL.sub(lambda m: f"\\x{ord(m.group()):02x}", value or "")
+    out = []
+    for ch in (value or ""):
+        if unicodedata.category(ch) in _ESCAPE_CATEGORIES:
+            cp = ord(ch)
+            out.append(f"\\x{cp:02x}" if cp <= 0xff else f"\\u{cp:04x}")
+        else:
+            out.append(ch)
+    s = "".join(out)
     return s if len(s) <= limit else s[:limit] + "…"
 
 
