@@ -116,12 +116,16 @@ def test_openai_provider_chat_parses_response(monkeypatch):
         def __exit__(self, *a):
             return False
 
-    payload = {"choices": [{"message": {"content": "hello from local llm"}}]}
+    payload = {"choices": [{"message": {"content": "hello from local llm"}}],
+               "usage": {"prompt_tokens": 12, "completion_tokens": 5}}
     monkeypatch.setattr(llm_mod.urllib.request, "urlopen",
                         lambda req, timeout=0: _Resp(payload))
     p = OpenAICompatProvider(model="m", api_base="http://localhost:11434/v1",
                              api_key="k")
     assert p.complete("hi") == "hello from local llm"
+    # token usage is metered cumulatively across calls
+    p.complete("again")
+    assert p.usage == {"input_tokens": 24, "output_tokens": 10, "calls": 2}
 
 
 def test_openai_provider_chat_error_wrapped(monkeypatch):

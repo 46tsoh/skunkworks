@@ -124,6 +124,8 @@ class OpenAICompatProvider:
         self.timeout_s = timeout_s
         self.temperature = temperature
         self.name = f"llm:{self.model}"
+        # Cumulative token usage across this provider's calls (Strix-style).
+        self.usage = {"input_tokens": 0, "output_tokens": 0, "calls": 0}
         if local_only and not is_local_base(self.api_base):
             raise LLMError(
                 f"LLM api_base {self.api_base!r} is not localhost; Aegis is "
@@ -148,6 +150,10 @@ class OpenAICompatProvider:
         try:
             with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
+            usage = data.get("usage") or {}
+            self.usage["input_tokens"] += int(usage.get("prompt_tokens", 0) or 0)
+            self.usage["output_tokens"] += int(usage.get("completion_tokens", 0) or 0)
+            self.usage["calls"] += 1
             return data["choices"][0]["message"]["content"]
         except (urllib.error.URLError, TimeoutError, ValueError, KeyError,
                 IndexError) as exc:

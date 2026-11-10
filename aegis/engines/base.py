@@ -198,6 +198,7 @@ class Orchestrator:
         # Generative planner: in full-llm / llm+decision modes an LLM plans and
         # writes alongside the decider. Inject it into any engine that accepts
         # one; the decider (LLM-judge or Jev) stays the router's backend.
+        planner = None
         if config.aegis.uses_planner:
             from aegis.llm import build_llm
             planner = build_llm(
@@ -300,6 +301,14 @@ class Orchestrator:
                 degraded = True
         master.metrics["degraded"] = degraded
         master.metrics["tool_failures"] = tool_failures
+        # Generative-LLM token usage for the run (the planner/writer half).
+        usage = getattr(planner, "usage", None)
+        if usage and usage.get("calls"):
+            master.metrics["llm_usage"] = {
+                "model": getattr(planner, "model", None),
+                **usage,
+                "total_tokens": usage["input_tokens"] + usage["output_tokens"],
+            }
 
         finished = time.time()
         duration_ms = (time.perf_counter() - t0) * 1000.0
