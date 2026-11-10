@@ -59,10 +59,13 @@ action named. Nothing here is faked to look finished.
 | 10 | Static-engine generative parity + one unified cross-engine transcript (forest graph: coordinator + researcher) | **done** (merged #12) | — |
 | 11 | Per-run LLM token metering + live-view performance | **done** (merged #13) | — (`metrics.llm_usage`, Overview display) |
 | 12 | Agent-driven selection of the real tool adapters (`--use-tools` shows genuine adapter calls) | **done** (merged #14) | — (`RegistryProbe`; tools run once, cached) |
+| 13 | `aegis scan` — authorized live scanning against an external target, driven through the full agent loop → dashboard | **done** (merged #16, #19, #20) | — (`--authorized`-gated, scanners-only, per-agent tokens) |
+| 14 | All three network-scanner categories live-proven against authorized internet targets | **done** (merged #22, #23) | — recon/nmap (scanme.nmap.org), web/nuclei (testphp.vulnweb.com), dast/ZAP passive+active (demo.testfire.net → live SQLi + XSS) |
 
 ### Open follow-ups (not blocking)
 
-- **Live Docker scanning** — pull the 15 remaining images (`./docker/pull-images.sh`) + per-tool exit-code tuning so `--use-tools` runs real binaries against a target (fixtures are the tested contract; live fails closed until then).
+- **Live scanning across all categories — done.** recon/web/dast are live-proven end-to-end (`aegis scan --tool {recon,web,dast} [--active]`). Remaining images are the deep static/RAPTOR tools (codeql/semgrep/trivy/fuzz) and the other dynamic adapters (proxy/browser) — fixtures are the tested contract; live fails closed until each is pulled + exit-code-tuned.
+- **Autonomous red-teaming / exploitation chaining (OSAI & CTF)** — the next major thrust: the agent actively *chains* attacks (not just scans + analyzes). Offensive capability with real safety weight; warrants a short design on scope + authorization model before building.
 - **Per-agent token attribution** — usage is metered per run; attributing it per agent/turn is a follow-on.
 - **Free-form tool invocation** — the agent selects from registered adapters in order; arbitrary model-authored commands/args are the deepest Strix behaviour and remain future work (defensive-scope-gated).
 - **`/impeccable` landing-page finish gate** for a marketing-style overview.
