@@ -69,12 +69,24 @@ class WebDockerTool(DockerBackedTool):
     kind = ToolKind.DYNAMIC
     allows_network = True  # remote web scanner (nuclei)
     image = IMAGE
+    timeout_s = 300.0  # nuclei scans a live URL; give it room
+    # nuclei ships no templates in the image; they are provisioned once into a
+    # named volume (see docker/pull-images.sh) and mounted read-only here.
+    TEMPLATES_VOLUME = "aegis-nuclei-templates"
+
+    def volumes(self):
+        return [(self.TEMPLATES_VOLUME, "/root/nuclei-templates")]
 
     def argv(self, target: str, **opts):
         # -jsonl machine-readable findings to stdout; -duc skips the remote
-        # template-update check (local-only). Target URL is caller-authorized.
+        # template-update check (templates are mounted from the volume). Target
+        # URL is caller-authorized. Optional --tags bounds the template set.
         url = opts.get("url", target)
-        return ["nuclei", "-u", url, "-jsonl", "-silent", "-duc"]
+        argv = ["nuclei", "-u", url, "-jsonl", "-silent", "-duc"]
+        tags = opts.get("tags")
+        if tags:
+            argv += ["-tags", tags]
+        return argv
 
 
 def make_docker() -> WebDockerTool:

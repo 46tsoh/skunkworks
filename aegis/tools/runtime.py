@@ -61,6 +61,7 @@ def run_container(
     memory: str = "2g",
     cpus: str = "2.0",
     entrypoint: Optional[str] = None,
+    volumes: Optional[Sequence[Tuple[str, str]]] = None,  # (named volume, container) ro
 ) -> ContainerRun:
     """Run ``image`` locally with the given args and return its output.
 
@@ -77,6 +78,10 @@ def run_container(
         cmd += ["--entrypoint", entrypoint]
     for host, container in (mounts or []):
         cmd += ["-v", f"{Path(host).resolve()}:{container}:ro"]
+    for name, container in (volumes or []):
+        # A named Docker volume (not a host path) — e.g. provisioned scanner
+        # templates. Read-only like every other mount.
+        cmd += ["-v", f"{name}:{container}:ro"]
     cmd += ["-w", workdir, image, *args]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)

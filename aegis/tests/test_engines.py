@@ -138,7 +138,10 @@ def test_dynamic_engine_selects_real_tools_with_registry():
     tool calls carry the actual tool name + args, run once (no double-exec)."""
     from aegis.engines.events import EventSink
     from aegis.tools import default_registry
-    e = DynamicEngine(registry=default_registry(), event_sink=EventSink())
+    # Use the fixture adapters (fast, deterministic) regardless of which
+    # Docker images happen to be pulled locally.
+    e = DynamicEngine(registry=default_registry(prefer_docker=False),
+                      event_sink=EventSink())
     kb = KnowledgeBase()
     # seed (orchestrator step) then run — tools must execute once, cached between
     cands = list(e.enumerate_candidates("", AegisConfig()))

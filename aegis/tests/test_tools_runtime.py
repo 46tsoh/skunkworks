@@ -34,6 +34,24 @@ def test_run_container_builds_local_only_argv(monkeypatch):
     assert cmd[-2:] == ["scan", "/work"]
 
 
+def test_run_container_mounts_named_volume(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(rt.subprocess, "run",
+                        lambda cmd, **k: (captured.__setitem__("cmd", cmd)
+                                          or subprocess.CompletedProcess(cmd, 0, "", "")))
+    rt.run_container("img:1", ["scan"], network="bridge",
+                     volumes=[("aegis-nuclei-templates", "/root/nuclei-templates")])
+    # a named volume is mounted read-only (no host-path resolution)
+    assert "-v" in captured["cmd"]
+    assert "aegis-nuclei-templates:/root/nuclei-templates:ro" in captured["cmd"]
+
+
+def test_web_tool_declares_templates_volume():
+    from aegis.tools.adapters.web import make_docker
+    assert make_docker().volumes() == [
+        ("aegis-nuclei-templates", "/root/nuclei-templates")]
+
+
 def test_run_container_timeout(monkeypatch):
     def boom(*a, **k):
         raise subprocess.TimeoutExpired(cmd="docker", timeout=1)

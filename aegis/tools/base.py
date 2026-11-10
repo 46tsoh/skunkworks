@@ -179,6 +179,12 @@ class DockerBackedTool:
             return [(str(p), self.container_workdir)]
         return []
 
+    def volumes(self):
+        # Named Docker volumes to mount read-only (e.g. provisioned scanner
+        # templates). Default none; network scanners that need a data set
+        # (nuclei templates) override this.
+        return []
+
     def run(self, target: str, *, network: str = "none", **opts) -> ToolResult:
         t0 = time.perf_counter()
         if not docker_available():
@@ -216,7 +222,8 @@ class DockerBackedTool:
         try:
             cr = run_container(self.image, self.argv(target, **opts),
                                mounts=mounts, workdir=self.container_workdir,
-                               timeout_s=self.timeout_s, network=network)
+                               timeout_s=self.timeout_s, network=network,
+                               volumes=self.volumes())
             raw = cr.stdout + (("\n[stderr]\n" + cr.stderr) if cr.stderr else "")
             # Fail-closed: a timeout or an unexpected exit code is an ERROR, and
             # no candidates are surfaced from a failed run.
