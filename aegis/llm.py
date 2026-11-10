@@ -209,7 +209,97 @@ def summarize(provider: LLMProvider, title: str, context: str) -> str:
         return f"{title} — {context[:140]}"
 
 
+def plan_next_action(
+    provider: LLMProvider, state: str, options: Sequence[str]
+) -> tuple[int, str]:
+    """The 'LLM plans' half: pick the next action and say why, in the LLM's words.
+
+    Returns ``(index, rationale)`` into ``options``. Any failure (network, bad
+    JSON, out-of-range) falls back to ``(0, "")`` — option 0 is always the
+    sensible next action — so the loop stays safe and deterministic offline.
+    """
+    opts = list(options)
+    if not opts:
+        return 0, ""
+    numbered = "\n".join(f"{i}: {o}" for i, o in enumerate(opts))
+    prompt = (
+        "You are the coordinator agent driving a defensive security test of an "
+        "authorized target. Choose the single next action and explain why.\n\n"
+        f"Current state: {state}\n\nActions:\n{numbered}\n\n"
+        'Reply ONLY as JSON: {"action_index": <int>, '
+        '"rationale": "<one short sentence>"}'
+    )
+    try:
+        text = provider.complete(prompt)
+        lo, hi = text.find("{"), text.rfind("}")
+        if lo == -1 or hi == -1:
+            return 0, ""
+        data = json.loads(text[lo:hi + 1])
+        idx = max(0, min(int(data.get("action_index", 0)), len(opts) - 1))
+        return idx, str(data.get("rationale", "")).strip()[:200]
+    except (LLMError, ValueError, KeyError, TypeError):
+        return 0, ""
+
+
+def agent_turn(
+    provider: LLMProvider, role: str, task: str, state: str,
+    options: Sequence[str]
+) -> dict:
+    """One generative agent turn: assistant prose + a think note + an action.
+
+    Returns ``{"assistant", "think", "action_index", "rationale"}``. This is the
+    transcript content Strix-style agents emit each turn. Any failure falls back
+    to a terse deterministic turn choosing option 0, so a run never breaks.
+    """
+    opts = list(options)
+    fallback = {
+        "assistant": f"Continuing the {role} task: {task}.",
+        "think": "", "action_index": 0,
+        "rationale": "proceed with the next action",
+    }
+    if not opts:
+        return fallback
+    numbered = "\n".join(f"{i}: {o}" for i, o in enumerate(opts))
+    prompt = (
+        f"You are the {role} agent in a defensive security test of an authorized "
+        f"target. Your task: {task}.\nCurrent state: {state}\n\n"
+        f"Available next actions:\n{numbered}\n\n"
+        "Respond ONLY as JSON with your reasoning and the chosen action:\n"
+        '{"assistant": "<1-2 sentences on what you observe and intend>", '
+        '"think": "<a brief private reasoning note>", '
+        '"action_index": <int>, "rationale": "<one sentence: why this action>"}'
+    )
+    try:
+        text = provider.complete(prompt)
+        lo, hi = text.find("{"), text.rfind("}")
+        if lo == -1 or hi == -1:
+            return fallback
+        data = json.loads(text[lo:hi + 1])
+        idx = max(0, min(int(data.get("action_index", 0)), len(opts) - 1))
+        return {
+            "assistant": str(data.get("assistant", "")).strip()[:600] or fallback["assistant"],
+            "think": str(data.get("think", "")).strip()[:600],
+            "action_index": idx,
+            "rationale": str(data.get("rationale", "")).strip()[:200],
+        }
+    except (LLMError, ValueError, KeyError, TypeError):
+        return fallback
+
+
+def explain_finding(provider: LLMProvider, title: str, evidence: Sequence[str]) -> str:
+    """The 'LLM writes' half for a confirmed finding: one authored sentence."""
+    ev = "; ".join(evidence) if evidence else "no recorded evidence"
+    try:
+        return provider.complete(
+            "In one sentence, explain to a security reviewer why this finding is "
+            f"a real, exploitable issue. Title: {title}. Evidence: {ev}."
+        ).strip()[:280]
+    except LLMError:
+        return ""
+
+
 __all__ = [
     "LLMProvider", "LLMError", "TemplateLLM", "OpenAICompatProvider",
-    "build_llm", "judge_backend", "summarize", "is_local_base",
+    "build_llm", "judge_backend", "summarize", "plan_next_action",
+    "agent_turn", "explain_finding", "is_local_base",
 ]

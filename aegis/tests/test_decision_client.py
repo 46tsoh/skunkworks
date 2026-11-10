@@ -5,6 +5,9 @@ No real network: HTTP backends are exercised by stubbing their ``_post`` method
 deterministically and offline.
 """
 
+import io
+import json
+
 import pytest
 
 from aegis.decision.client import (
@@ -54,11 +57,52 @@ def test_llm_judge_non_json_raises():
 # -- JevBackend response parsing (stubbed transport) -------------------------
 def test_jev_parses_responses(monkeypatch):
     b = JevBackend(api_key="k")
-    monkeypatch.setattr(b, "_post", lambda path, payload: (
-        {"choice_index": 1, "probability": 0.9, "value": 7.0}, 1.2))
+    # Stub the typed-decision transport: return the answer the real
+    # /v1/decisions endpoint gives for each question type.
+    answers = {
+        "choice": {"type": "choice", "choice": "b", "confidence": 0.9},
+        "score": {"type": "score", "score": 4.5, "confidence": 0.8},  # level idx
+        "predicate": {"type": "predicate", "probability": 0.9},
+    }
+    monkeypatch.setattr(b, "_decide", lambda input_text, question: (
+        answers[question["type"]], 1.2, {"answers": [answers[question["type"]]]}))
     assert b.choose("p", ["a", "b"]).option == "b"
-    assert b.score("p", 0.0, 10.0).value == 7.0
+    # 10 levels across 0..10 → fractional level index 4.5 maps to 5.0
+    assert b.score("p", 0.0, 10.0).value == pytest.approx(5.0)
     assert b.boolean("s").probability == pytest.approx(0.9)
+
+
+def _stub_urlopen(monkeypatch, captured, response):
+    """Patch urllib so JevBackend._decide runs against a canned response."""
+    def fake(req, timeout=None):
+        captured["url"] = req.full_url
+        captured["body"] = json.loads(req.data.decode())
+        return io.BytesIO(json.dumps(response).encode())
+    monkeypatch.setattr("urllib.request.urlopen", fake)
+
+
+def test_jev_builds_decisions_request(monkeypatch):
+    """The wire request is {model, input, questions:[typed question]}."""
+    b = JevBackend(api_key="k", model="typesafe/jev-1.14.0")
+    captured = {}
+    _stub_urlopen(monkeypatch, captured,
+                  {"answers": [{"type": "choice", "choice": "probe",
+                                "confidence": 0.7}]})
+    res = b.choose("drive the test", ["probe", "finish"])
+    assert res.option == "probe"
+    assert captured["url"].endswith("/decisions")
+    assert captured["body"]["model"] == "typesafe/jev-1.14.0"
+    assert captured["body"]["input"] == "drive the test"
+    q = captured["body"]["questions"][0]
+    assert q["type"] == "choice"
+    assert [c["value"] for c in q["choices"]] == ["probe", "finish"]
+
+
+def test_jev_refusal_raises(monkeypatch):
+    b = JevBackend(api_key="k")
+    _stub_urlopen(monkeypatch, {}, {"answers": [{"type": "refusal"}]})
+    with pytest.raises(DecisionError):
+        b.boolean("s")
 
 
 def test_jev_choose_requires_options():

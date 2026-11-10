@@ -57,6 +57,13 @@ class AegisConfig:
     """Resolved run configuration for a single Aegis invocation."""
 
     backend: str = "static"
+    # High-level operating mode. When set it resolves the decider `backend` and
+    # turns the generative planner on/off:
+    #   full-llm       — one LLM both plans/writes AND decides
+    #   llm+decision   — an LLM plans/writes, a decision model (Jev) decides
+    #   static         — fully offline/deterministic (tests, no network)
+    # The decision model is never used alone: it only appears alongside an LLM.
+    mode: Optional[str] = None
     thresholds: dict = field(default_factory=lambda: dict(DEFAULT_THRESHOLDS))
     posterior_min: float = DEFAULT_POSTERIOR_MIN
     default_threshold: float = 0.5
@@ -66,8 +73,23 @@ class AegisConfig:
     llm_model: Optional[str] = None
     llm_api_base: Optional[str] = None
     llm_api_key: Optional[str] = None
+    # Which decision model drives `llm+decision` mode.
+    decision_model: str = "jev"
+
+    # mode -> decider backend
+    _MODE_BACKENDS = {"static": "static", "full-llm": "llm"}
 
     def __post_init__(self) -> None:
+        if self.mode is not None:
+            if self.mode == "llm+decision":
+                self.backend = self.decision_model
+            elif self.mode in self._MODE_BACKENDS:
+                self.backend = self._MODE_BACKENDS[self.mode]
+            else:
+                raise ValueError(
+                    f"unknown mode {self.mode!r} "
+                    "(full-llm|llm+decision|static)"
+                )
         if self.backend not in ("static", "basal", "jev", "llm"):
             raise ValueError(
                 f"unknown backend {self.backend!r} (static|basal|jev|llm)"
@@ -81,6 +103,15 @@ class AegisConfig:
             )
         if self.log_path is not None and not isinstance(self.log_path, Path):
             self.log_path = Path(self.log_path)
+
+    @property
+    def uses_planner(self) -> bool:
+        """True when a generative LLM plans/writes during the run.
+
+        Both real modes (full-llm, llm+decision) run a generative planner; the
+        offline static mode does not.
+        """
+        return self.mode in ("full-llm", "llm+decision")
 
     @classmethod
     def from_env(cls, **overrides) -> "AegisConfig":
@@ -102,6 +133,8 @@ class AegisConfig:
         log = os.environ.get("AEGIS_LOG")
         resolved = dict(
             backend=os.environ.get("AEGIS_BACKEND", "static"),
+            mode=os.environ.get("AEGIS_MODE"),
+            decision_model=os.environ.get("AEGIS_DECISION_MODEL", "jev"),
             thresholds=thresholds,
             posterior_min=float(
                 os.environ.get("AEGIS_POSTERIOR_MIN", DEFAULT_POSTERIOR_MIN)

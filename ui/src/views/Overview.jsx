@@ -34,7 +34,8 @@ export default function Overview({ model, onOpenFinding, goto }) {
 
       {metrics.degraded && (
         <div className="rounded-[var(--radius-card)] border px-4 py-3 text-[13px]"
-             style={{ borderColor: "var(--color-sev-high)55", background: "var(--color-sev-high)12",
+             style={{ borderColor: "color-mix(in oklab, var(--color-sev-high) 45%, transparent)",
+                      background: "color-mix(in oklab, var(--color-sev-high) 12%, transparent)",
                       color: "var(--color-sev-high)" }}>
           Run degraded — {(metrics.tool_failures || []).length} tool(s) did not complete. Results may be incomplete.
         </div>

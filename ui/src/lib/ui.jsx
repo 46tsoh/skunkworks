@@ -1,4 +1,5 @@
 // Shared visual primitives — one system (tokens from index.css), used everywhere.
+import { MarkDynamic, MarkStatic } from "./icons.jsx";
 
 export const SEVERITY = {
   Critical: { color: "var(--color-sev-critical)", rank: 4 },
@@ -93,10 +94,9 @@ export function Tag({ children, tone = "muted", title }) {
 }
 
 export function EngineTag({ engine }) {
-  const icon = engine === "dynamic" ? "◆" : "▣";
   return (
     <Tag tone="accent" title={`${engine} engine`}>
-      <span aria-hidden>{icon}</span>
+      {engine === "dynamic" ? <MarkDynamic /> : <MarkStatic />}
       {engine}
     </Tag>
   );

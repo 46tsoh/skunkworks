@@ -51,6 +51,53 @@ export function useAegisData() {
   return state;
 }
 
+/**
+ * Live transcript: poll data/events.jsonl so the agent view fills in real time
+ * while a run is writing it (no server beyond the dev server). Returns the full
+ * event list; empty until a run streams one.
+ */
+export function useLiveEvents(intervalMs = 1200) {
+  const [events, setEvents] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    let timer;
+    const tick = async () => {
+      try {
+        const evs = parseJsonl(await fetchText("data/events.jsonl"));
+        if (alive) setEvents((prev) => (evs.length !== prev.length ? evs : prev));
+      } catch {
+        /* no events file yet — fine */
+      }
+      if (alive) timer = setTimeout(tick, intervalMs);
+    };
+    tick();
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [intervalMs]);
+  return events;
+}
+
+/** Reconstruct the agent graph from the event stream (agents appear as they
+ *  spawn, so the graph grows live). */
+export function agentsFromEvents(events) {
+  const byId = {};
+  for (const e of events) {
+    if (e.type === "spawn") {
+      byId[e.agent_id] = {
+        id: e.agent_id, role: e.role, task: e.task,
+        parent_id: e.parent_id ?? null, status: "running",
+        steps_spent: 0, trajectory: [],
+      };
+    } else if (byId[e.agent_id]) {
+      if (e.type === "status") byId[e.agent_id].status = e.status;
+      else if (e.type === "tool_call" || e.type === "decision") byId[e.agent_id].steps_spent++;
+    }
+  }
+  return Object.values(byId);
+}
+
 /** Derived, view-ready slices of the report. */
 export function deriveModel(report, decisions) {
   if (!report) return null;
@@ -67,6 +114,7 @@ export function deriveModel(report, decisions) {
     rejected: report.rejected || [],
     engines,
     graph: (dyn.extra && dyn.extra.graph) || [],
+    transcript: (dyn.extra && dyn.extra.transcript) || [],
     hypotheses: (stat.extra && stat.extra.hypotheses) || [],
     coverage: (stat.extra && stat.extra.coverage) || {},
     toolRuns: engines.flatMap((e) =>

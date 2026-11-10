@@ -50,11 +50,19 @@ class AgentNode:
     parent_id: Optional[str] = None
     status: AgentStatus = AgentStatus.PENDING
     steps_spent: int = 0
+    # Ordered record of what this agent actually did, step by step. Each entry
+    # is {"seq": int, "kind": str, "label": str, "detail": str, "tone": str}.
+    trajectory: List[dict] = field(default_factory=list)
+
+    def log(self, seq: int, kind: str, label: str, detail: str = "",
+            tone: str = "neutral") -> None:
+        self.trajectory.append({"seq": seq, "kind": kind, "label": label,
+                                "detail": detail, "tone": tone})
 
     def as_dict(self) -> dict:
         return {"id": self.id, "role": self.role.value, "task": self.task,
                 "parent_id": self.parent_id, "status": self.status.value,
-                "steps_spent": self.steps_spent}
+                "steps_spent": self.steps_spent, "trajectory": self.trajectory}
 
 
 @dataclass
@@ -87,13 +95,39 @@ class DynamicEngine:
 
     def __init__(self, probe: Optional[SampleProbe] = None,
                  max_steps: int = 64, registry=None,
-                 tool_names: Optional[Sequence[str]] = None) -> None:
+                 tool_names: Optional[Sequence[str]] = None,
+                 planner=None, event_sink=None) -> None:
         self._probe = probe
         self._max_steps = max_steps
         self._registry = registry
         self._tool_names = tool_names
         self._tool_runs: list = []
+        self._planner = planner  # generative LLM (full-llm / llm+decision modes)
+        from aegis.engines.events import NullSink
+        self._events = event_sink or NullSink()
         self.graph: List[AgentNode] = []
+
+    def set_planner(self, planner) -> None:
+        """Inject the generative LLM that plans/writes (modes wire this in)."""
+        self._planner = planner
+
+    def set_event_sink(self, sink) -> None:
+        """Inject the live transcript sink (the Orchestrator wires this in)."""
+        self._events = sink
+
+    def _turn(self, role: str, task: str, state: str, options: Sequence[str]) -> dict:
+        """One agent turn: generative when a planner is present, else a
+        deterministic scripted narration (keeps offline runs reproducible)."""
+        if self._planner is not None and len(options) > 1:
+            from aegis.llm import agent_turn
+            return agent_turn(self._planner, role, task, state, options)
+        # Deterministic scripted turn — option 0 is the sensible next action.
+        act = options[0] if options else "finish"
+        verb = ("mapping the next attack surface" if act.startswith("probe")
+                else "triaging the next lead" if act.startswith("triage")
+                else "no work left; finishing")
+        return {"assistant": f"{role.capitalize()}: {verb}.",
+                "think": f"state — {state}", "action_index": 0, "rationale": ""}
 
     def available(self) -> bool:
         return True
@@ -126,6 +160,16 @@ class DynamicEngine:
         exploit = AgentNode("a0003", AgentRole.EXPLOITATION, "confirm leads",
                             "a0001", AgentStatus.RUNNING)
         self.graph = [coordinator, recon, exploit]
+        ev = self._events
+        # The coordinator opens the test and its two specialists are spawned.
+        ev.emit("a0001", "spawn", role="coordinator", task="drive the test",
+                parent_id=None)
+        ev.emit("a0001", "status", status="running")
+        for node in (recon, exploit):
+            ev.emit(node.id, "spawn", role=node.role.value, task=node.task,
+                    parent_id="a0001")
+            ev.emit("a0001", "message", to=node.id,
+                    text=f"You are {node.role.value}: {node.task}.")
 
         budget = StepBudget(max_steps=max(self._max_steps, 4 * len(candidates) + 8))
         unprobed = list(probe.surfaces())
@@ -143,44 +187,150 @@ class DynamicEngine:
                 options = [f"triage:{pending[0].id}", "finish"]
             else:
                 options = ["finish"]
-            action = router.choose("dynamic.route_next_action",
-                                   self._context(kb, unprobed, pending),
-                                   options).option
+            state = self._context(kb, unprobed, pending)
+
+            # 1. PLAN/WRITE — the coordinator takes a generative turn: assistant
+            #    prose + a private think note + its proposed action. Offline this
+            #    is a deterministic scripted turn, so the loop stays reproducible.
             budget.steps_spent += 1
+            seq = budget.steps_spent
+            turn = self._turn("coordinator", "drive the test", state, options)
+            ev.emit("a0001", "assistant", text=turn["assistant"])
+            if turn["think"]:
+                ev.emit("a0001", "think", text=turn["think"])
+            idx = turn["action_index"]
+            if idx:  # surface the planner's choice first
+                options = [options[idx]] + options[:idx] + options[idx + 1:]
+            if self._planner is not None and len(options) > 1:
+                coordinator.log(seq, "plan", f"plan → {options[0]}",
+                                turn["rationale"] or turn["assistant"])
+
+            # 2. DECIDE — the decision model (or the LLM, in full-llm mode)
+            #    commits one action through the shared router.
+            choice = router.choose("dynamic.route_next_action", state, options)
+            action = choice.option
+            ev.emit("a0001", "decision", kind="route_next_action",
+                    outcome=action, probability=round(choice.probability, 3),
+                    backend=choice.backend)
 
             if action.startswith("probe:"):
                 surface = action.split(":", 1)[1]
+                coordinator.log(seq, "route", f"delegate recon → {surface}",
+                                f"routed among {len(options)} options")
+                ev.emit("a0001", "message", to="a0002", text=f"Map {surface}.")
                 unprobed = [s for s in unprobed if s != surface]
                 if surface in seen_surfaces:
+                    recon.log(seq, "probe", surface, "already mapped", "muted")
                     continue
                 seen_surfaces.add(surface)
+                # 3. ACT — the recon agent runs a tool, with arguments, and reads
+                #    its output (the real tool when wired; the sample probe else).
+                ev.emit("a0002", "tool_call", tool="recon.probe",
+                        args={"surface": surface})
                 found = probe.probe(surface)
                 pending.extend(found)
                 recon.steps_spent += 1
+                titles = ", ".join(c.title for c in found) or "nothing"
+                ev.emit("a0002", "tool_output", tool="recon.probe", status="ok",
+                        summary=f"surfaced {len(found)} lead(s): {titles}",
+                        count=len(found))
+                recon.log(seq, "probe", surface,
+                          f"surfaced {len(found)} lead(s): {titles}",
+                          "found" if found else "muted")
             elif action.startswith("triage:"):
                 cand = pending.pop(0)
                 exploit.steps_spent += 1
+                coordinator.log(seq, "route", f"delegate exploit → {cand.title}",
+                                f"routed among {len(options)} options")
+                ev.emit("a0001", "message", to="a0003",
+                        text=f"Confirm the lead: {cand.title}.")
+                eturn = self._turn("exploitation", "confirm leads",
+                                   f"evaluating {cand.title} ({cand.component})",
+                                   ["triage this lead", "skip"])
+                ev.emit("a0003", "assistant", text=eturn["assistant"])
+                if eturn["think"]:
+                    ev.emit("a0003", "think", text=eturn["think"])
                 # 1. triage gate (cheap, before promotion)
-                if not is_true_positive(router, cand):
+                tp = is_true_positive(router, cand)
+                ev.emit("a0003", "decision", kind="triage.true_positive",
+                        outcome="true_positive" if tp else "false_positive")
+                if not tp:
                     kb.add_rejection(cand, "triage", "likely false positive")
                     stage_counts["triage"] += 1
+                    exploit.log(seq, "triage", cand.title,
+                                "rejected — likely false positive", "rejected")
                     continue
                 # 2-5. shared promotion path
                 outcome = promote_candidate(router, cand, kb.accepted,
                                             config.posterior_min)
                 if outcome.finding is not None:
+                    # 4. INTERPRET — the generative LLM writes why it matters.
+                    if self._planner is not None:
+                        from aegis.llm import explain_finding
+                        rationale = explain_finding(
+                            self._planner, cand.title, cand.evidence)
+                        if rationale:
+                            outcome.finding.rationale = rationale
                     kb.add_finding(outcome.finding)
                     key = ("validated_exploitable" if outcome.exploitable
                            else "validated_informational")
                     stage_counts[key] += 1
+                    if outcome.finding.rationale:
+                        ev.emit("a0003", "assistant",
+                                text=outcome.finding.rationale)
+                    ev.emit("a0003", "finding", id=cand.id, title=cand.title,
+                            severity=outcome.finding.severity,
+                            exploitable=outcome.exploitable)
+                    ev.emit("a0003", "message", to="a0001",
+                            text=f"Filed {cand.id}: {cand.title} "
+                                 f"({outcome.finding.severity}).")
+                    # DYNAMIC SPAWN — a confirmed exploitable finding earns a
+                    # dedicated subagent to develop it. The graph grows at run
+                    # time, Strix-style (create_agent + inter-agent messages).
+                    if outcome.exploitable and len(self.graph) < 8:
+                        aid = f"a{len(self.graph) + 1:04d}"
+                        task = f"develop PoC for {cand.title}"
+                        sub = AgentNode(aid, AgentRole.POST_EXPLOITATION, task,
+                                        "a0001", AgentStatus.RUNNING)
+                        self.graph.append(sub)
+                        ev.emit("a0001", "message", to=aid,
+                                text=f"Spin up and develop a PoC for {cand.id}.")
+                        ev.emit(aid, "spawn", role="post_exploitation",
+                                task=task, parent_id="a0001")
+                        ev.emit(aid, "status", status="running")
+                        sub.steps_spent += 1
+                        pturn = self._turn("post_exploitation", task,
+                                           f"developing a PoC for {cand.title}",
+                                           ["draft the PoC", "skip"])
+                        ev.emit(aid, "assistant", text=pturn["assistant"])
+                        if pturn["think"]:
+                            ev.emit(aid, "think", text=pturn["think"])
+                        sub.log(seq, "poc", cand.title,
+                                "drafted a proof-of-concept", "exploit")
+                        ev.emit(aid, "message", to="a0001",
+                                text=f"PoC drafted for {cand.id}.")
+                        ev.emit(aid, "finish",
+                                summary=f"PoC ready for {cand.id}")
+                    exploit.log(seq, "promote", cand.title,
+                                outcome.finding.rationale or
+                                ("confirmed exploitable" if outcome.exploitable
+                                 else "promoted — informational"),
+                                "exploit" if outcome.exploitable else "found")
                 else:
                     kb.rejected.append(outcome.rejection)
                     stage_counts[outcome.stage] += 1
+                    exploit.log(seq, "triage", cand.title,
+                                f"dropped at {outcome.stage}", "rejected")
             else:  # finish
+                coordinator.log(seq, "finish", "run complete",
+                                f"{len(kb.accepted)} finding(s) confirmed")
+                ev.emit("a0001", "finish",
+                        summary=f"{len(kb.accepted)} finding(s) confirmed")
                 break
 
         for node in self.graph:
             node.status = AgentStatus.COMPLETED
+            ev.emit(node.id, "status", status="completed")
         kb.rank()
 
         return EngineReport(
@@ -191,14 +341,26 @@ class DynamicEngine:
             extra={"graph": [n.as_dict() for n in self.graph],
                    "steps_spent": budget.steps_spent,
                    "tool_runs": self._tool_runs,
+                   "transcript": self._events.events,
                    "degraded": any(r["status"] not in ("ok",)
                                    for r in self._tool_runs)},
         )
 
     @staticmethod
     def _context(kb: KnowledgeBase, unprobed, pending) -> str:
-        return (f"surfaces_left={len(unprobed)} pending={len(pending)} "
-                f"accepted={len(kb.accepted)}")
+        # A real instruction, not a terse machine string: a deterministic
+        # backend takes the sensible option (0) regardless, but an LLM judge
+        # needs to be told the goal or it finishes immediately.
+        return (
+            "You are the coordinator agent driving a defensive security test of "
+            "an authorized target. Choose the next action. Keep probing every "
+            "attack surface and triaging every pending lead; only choose "
+            "'finish' once there are no surfaces left to probe and no leads "
+            "pending. Current state: "
+            f"{len(unprobed)} attack surface(s) not yet probed, "
+            f"{len(pending)} lead(s) pending triage, "
+            f"{len(kb.accepted)} finding(s) confirmed so far."
+        )
 
 
 __all__ = ["DynamicEngine", "SampleProbe", "AgentNode", "AgentRole",
