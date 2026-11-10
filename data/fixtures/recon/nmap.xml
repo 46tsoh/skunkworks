@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nmaprun>
 <!-- Recorded `nmap -sV -oX` run against the bundled local sample target. -->
 <nmaprun scanner="nmap" args="nmap -sV -oX - 127.0.0.1" start="1731200000" version="7.94">
   <host starttime="1731200000" endtime="1731200012">

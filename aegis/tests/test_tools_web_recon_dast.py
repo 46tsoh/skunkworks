@@ -38,9 +38,23 @@ def test_recon_parse_handles_empty():
 
 
 def test_recon_parse_rejects_dtd():
-    # XXE / billion-laughs hardening: any DTD/entity declaration is refused.
+    # XXE / billion-laughs hardening: entity + external-subset DTDs are refused.
     with pytest.raises(ValueError):
         recon.parse('<?xml version="1.0"?><!DOCTYPE x [<!ENTITY a "b">]><nmaprun/>', "t")
+    with pytest.raises(ValueError):
+        recon.parse('<?xml version="1.0"?><!DOCTYPE x SYSTEM "http://e/x.dtd"><nmaprun/>', "t")
+
+
+def test_recon_parse_accepts_real_nmap_doctype():
+    # Real nmap output declares a benign `<!DOCTYPE nmaprun>` (no internal
+    # subset) — it must parse, not be refused (regression from a live scan).
+    xml = ('<?xml version="1.0"?>\n<!DOCTYPE nmaprun>\n'
+           '<nmaprun><host><address addr="45.33.32.156"/><ports>'
+           '<port protocol="tcp" portid="22"><state state="open"/>'
+           '<service name="ssh" product="OpenSSH" version="6.6.1p1"/>'
+           '</port></ports></host></nmaprun>')
+    cands = recon.parse(xml, "scanme.nmap.org")
+    assert len(cands) == 1 and "ssh" in cands[0].title.lower()
 
 
 # -- web (nuclei JSONL) ------------------------------------------------------
@@ -151,11 +165,12 @@ def test_dynamic_tool_error_is_caught(monkeypatch, mod):
 
 
 def test_fixture_parser_error_becomes_error_status(monkeypatch):
-    # A malformed fixture (DTD-bearing XML) surfaces as ERROR, not a crash.
+    # A hostile fixture (entity-bearing DTD) surfaces as ERROR, not a crash.
     tool = recon.make_fixture()
     monkeypatch.setattr(
         tool, "_parser",
-        lambda raw, target: recon.parse('<!DOCTYPE x><nmaprun/>', target))
+        lambda raw, target: recon.parse(
+            '<!DOCTYPE x [<!ENTITY a "b">]><nmaprun/>', target))
     result = tool.run("t")
     assert result.status == ToolStatus.ERROR
     assert result.errors

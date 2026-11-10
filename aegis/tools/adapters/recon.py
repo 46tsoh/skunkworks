@@ -41,12 +41,19 @@ def parse(raw: str, target: str) -> List[Candidate]:
     """Turn nmap XML into one candidate per open port. Tolerant of empty input."""
     if not raw.strip():
         return []
-    # Harden the stdlib XML parser (no defusedxml dependency): nmap output never
-    # declares a DTD or entities, so refuse any input that does — this blocks
-    # XXE (external-entity) and billion-laughs expansion up front.
+    # Harden the stdlib XML parser (no defusedxml dependency). Real nmap output
+    # carries a benign `<!DOCTYPE nmaprun>` with no internal subset, so allow a
+    # bare DOCTYPE but refuse anything that enables XXE or billion-laughs: entity
+    # declarations and external (SYSTEM/PUBLIC) references.
     lowered = raw.lower()
-    if "<!doctype" in lowered or "<!entity" in lowered:
-        raise ValueError("refusing XML with DTD/entity declarations")
+    if "<!entity" in lowered:
+        raise ValueError("refusing XML with entity declarations")
+    doctype = lowered.find("<!doctype")
+    if doctype != -1:
+        end = lowered.find(">", doctype)
+        head = lowered[doctype:end if end != -1 else None]
+        if "[" in head or "system" in head or "public" in head:
+            raise ValueError("refusing XML with an internal/external DTD subset")
     try:
         root = ET.fromstring(raw)
     except ET.ParseError:
