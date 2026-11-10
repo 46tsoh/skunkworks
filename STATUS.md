@@ -53,7 +53,19 @@ action named. Nothing here is faked to look finished.
 | 4 | Analysis parity through the decision layer (exploitability chain + hypothesis posterior + triage/dedup/CVSS), calibrated on a labeled corpus | **done** | — (labeled corpus + `aegis calibrate`) |
 | 5 | Unified UI (Vite + React + Tailwind) over both engines | **done** (functional; design polish pass pending) | — (`ui/`; optional `/impeccable` + landing-page polish is a follow-up) |
 | 6 | End-to-end interop: one command runs both engines over the sample target → one unified deduped report + dashboard | **done** | — (`aegis dashboard`) |
-| 7 | Docs, tests, CI (README, architecture doc, >80% core coverage, CI) | **done** | — (README, arch map, specs, NOTICE; 96% coverage; CI runs pytest 3.9/3.12 + dashboard build) |
+| 7 | Docs, tests, CI (README, architecture doc, >80% core coverage, CI) | **done** | — (README, arch map, specs, NOTICE; 95% coverage; CI runs pytest 3.9/3.12 + dashboard build) |
+| 8 | Operating modes (`full-llm` / `llm+decision` / `static`) — LLM plans & writes, decision model decides, code acts | **done** (merged #11) | — (`--mode`; Jev rewritten to its real `/v1/decisions` API) |
+| 9 | Strix-style agent transcript (assistant prose, `think`, tool calls w/ args, decisions, messages, findings) + live streaming + dynamic subagent spawning | **done** (merged #11) | — (per-agent + unified transcript, `events.jsonl` tailed live) |
+| 10 | Static-engine generative parity + one unified cross-engine transcript (forest graph: coordinator + researcher) | **done** (merged #12) | — |
+| 11 | Per-run LLM token metering + live-view performance | **done** (merged #13) | — (`metrics.llm_usage`, Overview display) |
+| 12 | Agent-driven selection of the real tool adapters (`--use-tools` shows genuine adapter calls) | **done** (merged #14) | — (`RegistryProbe`; tools run once, cached) |
+
+### Open follow-ups (not blocking)
+
+- **Live Docker scanning** — pull the 15 remaining images (`./docker/pull-images.sh`) + per-tool exit-code tuning so `--use-tools` runs real binaries against a target (fixtures are the tested contract; live fails closed until then).
+- **Per-agent token attribution** — usage is metered per run; attributing it per agent/turn is a follow-on.
+- **Free-form tool invocation** — the agent selects from registered adapters in order; arbitrary model-authored commands/args are the deepest Strix behaviour and remain future work (defensive-scope-gated).
+- **`/impeccable` landing-page finish gate** for a marketing-style overview.
 
 ## Milestones 6 & 7 — done
 
