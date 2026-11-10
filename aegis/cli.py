@@ -293,12 +293,13 @@ def _cmd_exploit(args: argparse.Namespace) -> int:
     if not result.attempted:
         print(f"  {result.note}", file=sys.stderr)
         return 2
+    from aegis.redteam.http import sanitize_text
     status = "CONFIRMED" if result.verified else "not confirmed"
     print(f"  {status}  [{result.cwe}]  {result.requests} request(s)")
     if result.proof:
-        print(f"  proof: {result.proof}")
+        print(f"  proof: {sanitize_text(result.proof)}")
     for e in result.evidence:
-        print(f"    - {e}")
+        print(f"    - {sanitize_text(e)}")
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(json.dumps(

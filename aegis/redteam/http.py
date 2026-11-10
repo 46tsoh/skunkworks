@@ -14,6 +14,7 @@ no way to reach the network except through a scope-gated transport.
 
 from __future__ import annotations
 
+import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -26,6 +27,22 @@ from aegis.redteam.scope import EngagementScope, ScopeError
 _TIMEOUT_S = 15.0
 _MAX_BYTES = 2 * 1024 * 1024  # 2 MiB of response is plenty to verify a marker
 _USER_AGENT = "aegis-redteam/1.0"   # generic; never the operator's identity
+
+# Control characters (incl. newlines/tabs/ESC) that must never be emitted raw
+# from attacker-influenced response data — otherwise a target could inject
+# terminal escape sequences into our output or audit log.
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def sanitize_text(value: str, limit: int = 2000) -> str:
+    """Escape control chars in attacker-influenced text and bound its length.
+
+    Used on anything derived from a response (evidence, proof, header values)
+    before it is printed or logged, so a hostile target cannot inject terminal
+    escape sequences or spoof lines.
+    """
+    s = _CONTROL.sub(lambda m: f"\\x{ord(m.group()):02x}", value or "")
+    return s if len(s) <= limit else s[:limit] + "…"
 
 
 @dataclass
@@ -128,4 +145,4 @@ class ScopeGatedTransport:
 
 
 __all__ = ["HttpResponse", "Transport", "UrllibTransport", "ScopeGatedTransport",
-           "ScopeError"]
+           "ScopeError", "sanitize_text"]
