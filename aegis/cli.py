@@ -148,6 +148,31 @@ def _cmd_tools(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_calibrate(args: argparse.Namespace) -> int:
+    from aegis.calibration import calibrate, recommended_thresholds
+    report = calibrate(args.corpus, backend=args.backend,
+                       target_recall=args.target_recall)
+    print(f"\n=== Aegis calibration (backend: {report.backend}, "
+          f"corpus: {report.corpus_size}) ===")
+    for kind, kc in report.kinds.items():
+        b = kc.best_f1()
+        rf = kc.at(kc.recommended_recall_first)
+        print(f"\n{kind}")
+        print(f"  max-F1       thr={b.threshold:.2f}  P={b.precision:.2f} "
+              f"R={b.recall:.2f} F1={b.f1:.2f}")
+        print(f"  recall-first thr={kc.recommended_recall_first:.2f}  "
+              f"P={rf.precision:.2f} R={rf.recall:.2f} "
+              f"(target recall {kc.target_recall})")
+    rec = recommended_thresholds(report, recall_first=True)
+    print(f"\nRecommended thresholds (recall-first): {rec}")
+    if args.out:
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(json.dumps(report.as_dict(), indent=2),
+                            encoding="utf-8")
+        print(f"Wrote {args.out}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="aegis",
@@ -192,6 +217,16 @@ def build_parser() -> argparse.ArgumentParser:
     tools_p.add_argument("--fixtures-only", action="store_true",
                          help="report the offline fixture adapters only")
     tools_p.set_defaults(func=_cmd_tools)
+
+    cal = sub.add_parser("calibrate",
+                         help="calibrate decision thresholds on a labeled corpus")
+    cal.add_argument("--corpus", type=Path,
+                     default=_REPO_ROOT / "data" / "corpus" / "labeled.json")
+    cal.add_argument("--backend", choices=["static"], default="static")
+    cal.add_argument("--target-recall", type=float, default=1.0)
+    cal.add_argument("--out", type=Path, default=None,
+                     help="write the full calibration report JSON here")
+    cal.set_defaults(func=_cmd_calibrate)
     return parser
 
 

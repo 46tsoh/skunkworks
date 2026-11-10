@@ -25,6 +25,7 @@ python -m venv .venv
 .venv/bin/aegis run --backend llm       # drive decisions with a standard local LLM
 .venv/bin/aegis run --use-tools         # source candidates from the tool registry
 .venv/bin/aegis tools                   # tool adapter inventory + availability
+.venv/bin/aegis calibrate               # tune decision thresholds on a labeled corpus
 .venv/bin/aegis run --out ./run         # also write report.json + decisions.jsonl
 .venv/bin/pytest --cov=aegis            # 226 passing, ~96% coverage
 ```
