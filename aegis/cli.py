@@ -153,6 +153,74 @@ def _cmd_tools(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_scan(args: argparse.Namespace) -> int:
+    """Run one tool live against an AUTHORIZED external target (network on).
+
+    Gated behind --authorized: this is for targets you own, public test ranges
+    (scanme.nmap.org, *.vulnweb.com), or competition/CTF targets you are
+    permitted to test. It is never for arbitrary third-party hosts.
+    """
+    if not args.authorized:
+        print("Refusing: `aegis scan` reaches an external target over the "
+              "network. Re-run with --authorized to confirm the target is one "
+              "you own, a public test range, or a competition/CTF target you "
+              "are permitted to test. Never scan third parties without "
+              "authorization.", file=sys.stderr)
+        return 2
+
+    from aegis.tools import default_registry
+    from aegis.tools.base import DockerBackedTool
+    from aegis.knowledge.base import KnowledgeBase
+
+    reg = default_registry()
+    try:
+        tool = reg.get(args.tool)
+    except KeyError:
+        print(f"unknown tool {args.tool!r}; see `aegis tools`", file=sys.stderr)
+        return 2
+    if not isinstance(tool, DockerBackedTool):
+        print(f"tool {args.tool!r} has no live Docker adapter available "
+              f"(image not pulled?); see `aegis tools`", file=sys.stderr)
+        return 2
+
+    print(f"[authorized scan] {args.tool} → {args.target}  (network enabled)")
+    # Pass the target under every arg name adapters read (host/url); extras are
+    # ignored by argv().
+    result = tool.run(args.target, network="bridge",
+                      host=args.target, url=args.target)
+    print(f"  status={result.status.value}  "
+          f"candidates={len(result.candidates)}  "
+          f"({result.duration_ms:.0f} ms)")
+    if not result.ok:
+        for e in result.errors:
+            print(f"  ! {e}", file=sys.stderr)
+        return 1
+
+    cands = list(result.candidates)
+    for c in cands:
+        c.source_engine = tool.kind.value
+    cfg = AegisConfig.from_env(
+        backend=args.backend, local_only=not args.allow_egress)
+    router = build_router(cands, config=cfg)
+    kb = KnowledgeBase()
+    run(router, cands, posterior_min=cfg.posterior_min, kb=kb)
+    kb.rank()
+
+    print(f"\n-- Findings on {args.target} ({len(kb.accepted)}) --")
+    for f in kb.accepted:
+        flag = " EXPLOITABLE" if f.exploitable else ""
+        print(f"  [{f.severity:8} {f.cvss_score:4.1f}] {f.title}  "
+              f"[{f.candidate.component}]{flag}")
+    if not kb.accepted:
+        print("  (no findings promoted)")
+    if args.out:
+        args.out.mkdir(parents=True, exist_ok=True)
+        (args.out / "scan.json").write_text(
+            json.dumps(kb.as_dict(), indent=2), encoding="utf-8")
+        print(f"\nWrote {args.out / 'scan.json'}")
+    return 0
+
+
 def _cmd_calibrate(args: argparse.Namespace) -> int:
     from aegis.calibration import calibrate, recommended_thresholds
     report = calibrate(args.corpus, backend=args.backend,
@@ -281,6 +349,23 @@ def build_parser() -> argparse.ArgumentParser:
     tools_p.add_argument("--fixtures-only", action="store_true",
                          help="report the offline fixture adapters only")
     tools_p.set_defaults(func=_cmd_tools)
+
+    scan_p = sub.add_parser(
+        "scan", help="run one tool live against an AUTHORIZED external target")
+    scan_p.add_argument("--target", required=True,
+                        help="host/URL you are authorized to test (owned, a "
+                             "public test range, or a competition/CTF target)")
+    scan_p.add_argument("--tool", default="recon",
+                        help="tool adapter to run (default: recon/nmap)")
+    scan_p.add_argument("--authorized", action="store_true",
+                        help="confirm you are permitted to test this target "
+                             "(required; external scans are refused otherwise)")
+    scan_p.add_argument("--backend", choices=["static", "basal", "jev", "llm"],
+                        default="static", help="decision backend (default: static)")
+    scan_p.add_argument("--allow-egress", action="store_true")
+    scan_p.add_argument("--out", type=Path, default=None,
+                        help="directory for scan.json")
+    scan_p.set_defaults(func=_cmd_scan)
 
     cal = sub.add_parser("calibrate",
                          help="calibrate decision thresholds on a labeled corpus")

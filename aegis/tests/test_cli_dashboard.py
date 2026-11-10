@@ -29,3 +29,13 @@ def test_dashboard_no_serve_with_tools(tmp_path, monkeypatch):
     # tool-sourced candidates from both kinds flowed through to findings
     engines = report["summary"]["engine_counts"]
     assert engines.get("dynamic", 0) > 0 and engines.get("static", 0) > 0
+
+
+def test_scan_refuses_without_authorization(capsys):
+    """`aegis scan` must refuse an external target unless --authorized is set —
+    it never touches the network in the refusal path."""
+    import aegis.cli as cli
+    rc = cli.main(["scan", "--target", "example.com", "--tool", "recon"])
+    assert rc == 2
+    err = capsys.readouterr().err.lower()
+    assert "authorized" in err and "network" in err

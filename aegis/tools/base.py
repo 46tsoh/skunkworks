@@ -174,7 +174,7 @@ class DockerBackedTool:
             return [(str(p), self.container_workdir)]
         return []
 
-    def run(self, target: str, **opts) -> ToolResult:
+    def run(self, target: str, *, network: str = "none", **opts) -> ToolResult:
         t0 = time.perf_counter()
         if not docker_available():
             return ToolResult(self.name, ToolStatus.UNAVAILABLE, target=target,
@@ -191,9 +191,11 @@ class DockerBackedTool:
                 errors=[f"target {target!r} not found / not mountable"],
                 duration_ms=(time.perf_counter() - t0) * 1000.0)
         try:
+            # network defaults to "none" (local-only isolation). An authorized
+            # external scan passes network="bridge" explicitly (see `aegis scan`).
             cr = run_container(self.image, self.argv(target, **opts),
                                mounts=mounts, workdir=self.container_workdir,
-                               timeout_s=self.timeout_s)
+                               timeout_s=self.timeout_s, network=network)
             raw = cr.stdout + (("\n[stderr]\n" + cr.stderr) if cr.stderr else "")
             # Fail-closed: a timeout or an unexpected exit code is an ERROR, and
             # no candidates are surfaced from a failed run.
