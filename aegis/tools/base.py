@@ -149,6 +149,14 @@ class DockerBackedTool:
     requires_binary = "docker"
     container_workdir = "/work"
     timeout_s = 120.0
+    # Exit codes that mean "ran successfully". Default {0}; adapters whose tool
+    # exits non-zero to signal findings (e.g. semgrep exits 1) widen this. A
+    # non-zero exit outside this set is a real failure -> ERROR (never a silent
+    # clean OK: a failed scan must not look like a finding-free scan).
+    ok_exit_codes = frozenset({0})
+    # Tools that read a mounted target (vs. a URL) set this so a missing/
+    # unmountable target is ERROR rather than a meaningless empty scan.
+    requires_target_mount = False
 
     def __init__(self, parser: Parser) -> None:
         self._parser = parser
@@ -176,19 +184,36 @@ class DockerBackedTool:
                 self.name, ToolStatus.UNAVAILABLE, target=target,
                 errors=[f"image {self.image!r} not present; build/pull it "
                         "locally (see docker/README.md) or use the fixture"])
+        mounts = self.mounts(target)
+        if self.requires_target_mount and not mounts:
+            return ToolResult(
+                self.name, ToolStatus.ERROR, target=target,
+                errors=[f"target {target!r} not found / not mountable"],
+                duration_ms=(time.perf_counter() - t0) * 1000.0)
         try:
             cr = run_container(self.image, self.argv(target, **opts),
-                               mounts=self.mounts(target),
-                               workdir=self.container_workdir,
+                               mounts=mounts, workdir=self.container_workdir,
                                timeout_s=self.timeout_s)
             raw = cr.stdout + (("\n[stderr]\n" + cr.stderr) if cr.stderr else "")
+            # Fail-closed: a timeout or an unexpected exit code is an ERROR, and
+            # no candidates are surfaced from a failed run.
+            if cr.timed_out:
+                return ToolResult(self.name, ToolStatus.ERROR, raw=raw,
+                                  target=target, errors=["timed out"],
+                                  metadata={"image": self.image, "exit": cr.exit_code},
+                                  duration_ms=(time.perf_counter() - t0) * 1000.0)
+            if cr.exit_code not in self.ok_exit_codes:
+                return ToolResult(
+                    self.name, ToolStatus.ERROR, raw=raw, target=target,
+                    errors=[f"exit code {cr.exit_code} (ok: "
+                            f"{sorted(self.ok_exit_codes)})"],
+                    metadata={"image": self.image, "exit": cr.exit_code},
+                    duration_ms=(time.perf_counter() - t0) * 1000.0)
             cands = self._parser(cr.stdout, target)
             for c in cands:
                 c.metadata.setdefault("tool", self.name)
-            status = ToolStatus.OK if not cr.timed_out else ToolStatus.ERROR
-            errors = ["timed out"] if cr.timed_out else []
-            return ToolResult(self.name, status, candidates=cands, raw=raw,
-                              target=target, errors=errors,
+            return ToolResult(self.name, ToolStatus.OK, candidates=cands, raw=raw,
+                              target=target,
                               metadata={"image": self.image, "exit": cr.exit_code},
                               duration_ms=(time.perf_counter() - t0) * 1000.0)
         except Exception as exc:

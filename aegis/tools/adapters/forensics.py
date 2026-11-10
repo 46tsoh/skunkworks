@@ -91,6 +91,7 @@ class ForensicsDockerTool(DockerBackedTool):
     name = "forensics"
     kind = ToolKind.STATIC
     image = IMAGE
+    requires_target_mount = True  # needs a repo on disk; empty mount -> ERROR
 
     def argv(self, target: str, **opts) -> Sequence[str]:
         # Entrypoint is `gitleaks`; scan the mounted repo history, redact secret

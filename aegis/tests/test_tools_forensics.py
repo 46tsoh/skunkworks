@@ -73,10 +73,33 @@ def test_forensics_parses_when_image_present(monkeypatch):
     fixture_json = forensics._FIXTURE.read_text()
     monkeypatch.setattr(base, "run_container",
                         lambda *a, **k: ContainerRun(0, fixture_json, ""))
-    result = forensics.make_docker().run("data/sample_repo")
+    result = forensics.make_docker().run("data")  # a real, mountable dir
     assert result.status == ToolStatus.OK
     assert len(result.candidates) == 3
     assert result.metadata["image"] == forensics.IMAGE
+
+
+def test_forensics_missing_target_is_error(monkeypatch):
+    # Needs a mounted repo: a missing target is ERROR, never a silent clean scan.
+    import aegis.tools.base as base
+    monkeypatch.setattr(base, "docker_available", lambda: True)
+    monkeypatch.setattr(base, "image_present", lambda image: True)
+    result = forensics.make_docker().run("data/does-not-exist")
+    assert result.status == ToolStatus.ERROR
+    assert "not found" in result.errors[0]
+
+
+def test_forensics_nonzero_exit_is_error(monkeypatch):
+    # A non-zero gitleaks exit (we force --exit-code 0) is a real failure.
+    import aegis.tools.base as base
+    monkeypatch.setattr(base, "docker_available", lambda: True)
+    monkeypatch.setattr(base, "image_present", lambda image: True)
+    monkeypatch.setattr(base, "run_container",
+                        lambda *a, **k: ContainerRun(128, "", "fatal: not a repo"))
+    result = forensics.make_docker().run("data")
+    assert result.status == ToolStatus.ERROR
+    assert result.candidates == []
+    assert "exit code 128" in result.errors[0]
 
 
 def test_forensics_runs_read_only_no_network(monkeypatch):
@@ -106,7 +129,7 @@ def test_forensics_error_is_caught(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("gitleaks exploded")
     monkeypatch.setattr(base, "run_container", boom)
-    result = forensics.make_docker().run("data/sample_repo")
+    result = forensics.make_docker().run("data")
     assert result.status == ToolStatus.ERROR
     assert "gitleaks exploded" in result.errors[0]
 
