@@ -38,6 +38,7 @@ class ExploitResult:
     requests: int = 0
     note: str = ""
     post_exploit: Optional[dict] = None   # stage-2 result, when it ran
+    lateral: Optional[dict] = None        # stage-3 result, when it ran
 
     def as_dict(self) -> dict:
         return {"target": self.target, "param": self.param, "kind": self.kind,
@@ -45,7 +46,7 @@ class ExploitResult:
                 "verified": self.verified, "technique": self.technique,
                 "cwe": self.cwe, "proof": self.proof, "evidence": self.evidence,
                 "requests": self.requests, "note": self.note,
-                "post_exploit": self.post_exploit}
+                "post_exploit": self.post_exploit, "lateral": self.lateral}
 
 
 class RedTeamEngine:
@@ -102,8 +103,26 @@ class RedTeamEngine:
             result.note = ("foothold confirmed; post-exploit not run "
                            "(scope allow_post_exploit is off)")
 
+        # Stage 3 — lateral movement. Runs ONLY on a sequence-capable cmdi
+        # foothold AND when the scope opted in (allow_lateral, default off).
+        # Pivots read-only to IN-SCOPE hosts only, bounded by max_hosts.
+        if (result.verified and self._scope.allow_lateral
+                and vr.technique == "cmdi" and vr.context.get("seq")):
+            self._maybe_lateral(result, vr)
+        elif (result.verified and self._scope.allow_post_exploit
+              and vr.technique == "cmdi" and vr.context.get("seq")):
+            result.note += " (lateral off)"
+
         self._emit("exploit_result", result.as_dict())
-        return result  # stage 1/2 stop here — no lateral movement (stage 3)
+        return result
+
+    def _foothold_runner(self, result: ExploitResult, vr: VerifyResult):
+        """A callable that runs one command through the confirmed foothold, via
+        the scope-gated transport."""
+        from aegis.redteam.postexploit import run_command
+        template = vr.context["template"]
+        return lambda cmd: run_command(self._transport, result.target,
+                                       result.param, template, cmd)
 
     def _maybe_post_exploit(self, result: ExploitResult,
                             vr: VerifyResult) -> None:
@@ -124,6 +143,21 @@ class RedTeamEngine:
         else:
             result.note = f"post-exploit ran: {pe.note}"
         self._emit("post_exploit_result", pe.as_dict())
+
+    def _maybe_lateral(self, result: ExploitResult, vr: VerifyResult) -> None:
+        from urllib.parse import urlparse
+        from aegis.redteam.lateral import move_laterally
+        origin = urlparse(result.target).hostname or ""
+        self._emit("lateral_start",
+                   {"origin": origin, "max_hosts": self._scope.max_hosts})
+        lat = move_laterally(self._scope, self._foothold_runner(result, vr),
+                             origin_host=origin, max_hosts=self._scope.max_hosts)
+        result.lateral = lat.as_dict()
+        result.requests += lat.requests
+        # Append — don't clobber the stage-2 post-exploit note when both ran.
+        result.note = (f"{result.note} | lateral: {lat.note}".strip(" |")
+                       if result.note else f"lateral: {lat.note}")
+        self._emit("lateral_result", lat.as_dict())
 
 
 __all__ = ["ExploitResult", "RedTeamEngine"]

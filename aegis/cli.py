@@ -317,6 +317,19 @@ def _cmd_exploit(args: argparse.Namespace) -> int:
                 print(f"    read {sanitize_text(fr.get('path',''))}: "
                       f"{sanitize_text((fr.get('content','') or '')[:120])} "
                       f"(no flag pattern)")
+    lat = result.lateral
+    if lat and lat.get("ran"):
+        print("  -- lateral movement (in-scope only, read-only) --")
+        for h in lat.get("refused_out_of_scope", []):
+            print(f"    refused (out of scope, not touched): {sanitize_text(h)}")
+        for p in lat.get("pivots", []):
+            reach = "reachable" if p.get("reachable") else "no response"
+            line = f"    pivot {sanitize_text(p.get('url',''))} → {reach}"
+            if p.get("flag"):
+                line += f"  FLAG: {sanitize_text(p.get('flag',''))}"
+            print(line)
+        for c in lat.get("capped", []):
+            print(f"    skipped (max_hosts): {sanitize_text(c)}")
     if result.note:
         print(f"  note: {sanitize_text(result.note)}")
     if args.out:

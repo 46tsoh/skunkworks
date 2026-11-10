@@ -303,3 +303,19 @@ def test_example_scope_file_loads():
     # the shipped example must stay valid
     s = load_scope("data/examples/engagement.scope.json")
     assert s.is_in_scope("10.129.0.9") and not s.is_in_scope("10.129.0.1")
+
+
+def test_max_hosts_zero_is_preserved_not_coerced(tmp_path):
+    # an explicit max_hosts: 0 means "no pivots" and must not become 1
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({"targets": {"hosts": ["t.htb"]},
+                             "limits": {"max_hosts": 0}}))
+    assert load_scope(p).max_hosts == 0
+
+
+def test_negative_max_hosts_rejected(tmp_path):
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({"targets": {"hosts": ["t.htb"]},
+                             "limits": {"max_hosts": -3}}))
+    with pytest.raises(ScopeError):
+        load_scope(p)
