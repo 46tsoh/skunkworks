@@ -12,8 +12,9 @@ from aegis.redteam.scope import (
     load_scope,
 )
 from aegis.redteam.engine import ExploitResult, RedTeamEngine
+from aegis.redteam.postexploit import PostExploitResult, retrieve_flag
 
 __all__ = [
     "EngagementScope", "ScopeDecision", "ScopeError", "load_scope",
-    "RedTeamEngine", "ExploitResult",
+    "RedTeamEngine", "ExploitResult", "PostExploitResult", "retrieve_flag",
 ]

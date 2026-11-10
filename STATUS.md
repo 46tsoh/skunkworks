@@ -64,6 +64,7 @@ action named. Nothing here is faked to look finished.
 | 15 | RAPTOR static tools live-proven on real code (offline, local) | **done** (merged #25, #26, #27) | — sca/Trivy (74 real CVEs), semgrep (6 SAST findings), codeql (4 dataflow source→sink: code/command/SQL-injection, URL-redirect) |
 | 16 | Red-team engine — engagement-scope authorization gate | **done** (merged #29, #30, #31) | — default-deny `EngagementScope`; 3 rounds of parser-differential hardening |
 | 17 | Red-team stage 1 — bounded exploit→verify (`aegis exploit`) | **done** | — scope-gated, non-destructive; XSS/boolean-SQLi/open-redirect; live-proven (reflected XSS confirmed on demo.testfire.net; out-of-scope refused) |
+| 18 | Red-team stage 2 — post-exploit flag retrieval (`allow_post_exploit`) | **done** | — cmdi confirm (reflection-immune arithmetic oracle) → read-only `id`/`uname`/`cat`; fixed command allowlist; live-proven flag capture on a local target; gated off by default; survived an adversarial multi-agent review |
 
 ### Open follow-ups (not blocking)
 
