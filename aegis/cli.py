@@ -505,7 +505,8 @@ def build_parser() -> argparse.ArgumentParser:
     exp.add_argument("--param", required=True,
                      help="request parameter to probe")
     exp.add_argument("--type", required=True,
-                     choices=["xss", "sqli", "redirect", "cmdi"],
+                     choices=["xss", "sqli", "redirect", "cmdi", "traversal",
+                              "ssti"],
                      help="weakness class to confirm")
     exp.add_argument("--flag-path", action="append", default=[],
                      help="file path to read for a flag in stage-2 post-exploit "
