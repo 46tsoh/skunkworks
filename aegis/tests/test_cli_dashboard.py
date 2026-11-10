@@ -22,6 +22,13 @@ def test_dashboard_no_serve_writes_unified_run(tmp_path, monkeypatch):
 
 def test_dashboard_no_serve_with_tools(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_REPO_ROOT", tmp_path)
+    # Force the fixture adapters: this test exercises tool→report wiring, not
+    # live Docker tools. Without this it would run whatever images happen to be
+    # pulled locally (slow, non-deterministic); CI has none, so it stays fast.
+    import aegis.tools as tools_mod
+    _real = tools_mod.default_registry
+    monkeypatch.setattr(tools_mod, "default_registry",
+                        lambda *a, **k: _real(prefer_docker=False))
     rc = cli.main(["dashboard", "--no-serve", "--serial", "--use-tools",
                    "--run-id", "d2"])
     assert rc == 0

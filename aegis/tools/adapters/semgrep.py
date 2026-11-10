@@ -2,6 +2,13 @@
 
 The same :func:`parse` feeds both the fixture adapter (offline, recorded output)
 and the Docker-backed adapter (runs `semgrep/semgrep` locally, no network).
+
+Offline rules: ``--config auto`` fetches rules from semgrep.dev, which is
+unreachable under ``--network none``. Instead the OSS ``semgrep-rules`` ruleset
+is provisioned once into a named volume (see docker/pull-images.sh), mounted
+read-only here, and selected per language. Pointing at the whole repo aborts
+(a rule-id collision across all dirs), so the adapter configures a curated set
+of common-language rule directories that loads cleanly as one invocation.
 """
 
 from __future__ import annotations
@@ -46,10 +53,32 @@ class SemgrepDockerTool(DockerBackedTool):
     kind = ToolKind.STATIC
     image = IMAGE
     ok_exit_codes = frozenset({0, 1})  # semgrep exits 1 when it finds matches
+    timeout_s = 300.0  # compiling many rulesets takes a while
+    # The OSS semgrep-rules ruleset, provisioned once into this read-only volume
+    # (docker/pull-images.sh). Mounted at RULES_DIR; selected per language below.
+    RULES_VOLUME = "aegis-semgrep-rules"
+    RULES_DIR = "/rules"
+    # Curated common-language rule dirs that load cleanly together (the full
+    # repo aborts on a cross-dir rule-id collision). Broad SAST coverage.
+    RULE_LANGS = ("python", "javascript", "typescript", "java", "go", "ruby",
+                  "php", "c", "csharp", "generic", "bash", "html", "dockerfile",
+                  "terraform", "yaml", "json")
+
+    def volumes(self):
+        return [(self.RULES_VOLUME, self.RULES_DIR)]
 
     def argv(self, target: str, **opts):
-        return ["semgrep", "--config", opts.get("config", "auto"),
-                "--json", "--quiet", self.container_workdir]
+        # Offline by construction: local rule files only (never --config auto),
+        # metrics off (no phone-home), scan everything in the read-only mount.
+        config = opts.get("config")
+        if config:
+            cfg = ["--config", config]
+        else:
+            cfg = []
+            for lang in self.RULE_LANGS:
+                cfg += ["--config", f"{self.RULES_DIR}/{lang}"]
+        return ["semgrep", *cfg, "--json", "--quiet", "--metrics=off",
+                "--no-git-ignore", self.container_workdir]
 
 
 def make_docker() -> SemgrepDockerTool:

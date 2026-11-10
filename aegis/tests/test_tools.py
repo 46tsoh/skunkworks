@@ -38,6 +38,42 @@ def test_semgrep_parse_handles_empty():
     assert semgrep.parse('{"results": []}', "t") == []
 
 
+def test_semgrep_argv_is_offline_and_uses_rules_volume():
+    """Semgrep must never fetch rules from the network (--config auto). It uses
+    the provisioned read-only rules volume, selecting curated language dirs,
+    with metrics off."""
+    tool = semgrep.make_docker()
+    argv = tool.argv("/work")
+    assert argv[0] == "semgrep"
+    assert "auto" not in argv                      # never the network ruleset
+    assert "--metrics=off" in argv                 # no phone-home
+    # every --config points inside the mounted rules volume
+    cfgs = [argv[i + 1] for i, a in enumerate(argv) if a == "--config"]
+    assert cfgs and all(c.startswith(tool.RULES_DIR + "/") for c in cfgs)
+    assert f"{tool.RULES_DIR}/python" in cfgs
+    assert tool.volumes() == [(tool.RULES_VOLUME, tool.RULES_DIR)]
+
+
+def test_semgrep_argv_config_override():
+    # An explicit config (e.g. a single ruleset) overrides the curated set.
+    argv = semgrep.make_docker().argv("/work", config="/rules/python")
+    assert argv.count("--config") == 1
+    assert argv[argv.index("--config") + 1] == "/rules/python"
+
+
+def test_semgrep_rules_volume_mounted_readonly(monkeypatch):
+    import aegis.tools.base as base
+    from aegis.tools.runtime import ContainerRun
+    monkeypatch.setattr(base, "docker_available", lambda: True)
+    monkeypatch.setattr(base, "image_present", lambda image: True)
+    captured = {}
+    monkeypatch.setattr(base, "run_container",
+                        lambda *a, **k: (captured.update(k)
+                                         or ContainerRun(0, '{"results": []}', "")))
+    semgrep.make_docker().run("data/sample_target")
+    assert captured["volumes"] == [("aegis-semgrep-rules", "/rules")]
+
+
 # -- availability degradation (no image / no docker) -------------------------
 def test_docker_tool_unavailable_without_image(monkeypatch):
     import aegis.tools.base as base
