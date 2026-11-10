@@ -45,6 +45,7 @@ class SemgrepDockerTool(DockerBackedTool):
     name = "semgrep"
     kind = ToolKind.STATIC
     image = IMAGE
+    ok_exit_codes = frozenset({0, 1})  # semgrep exits 1 when it finds matches
 
     def argv(self, target: str, **opts):
         return ["semgrep", "--config", opts.get("config", "auto"),
