@@ -188,3 +188,30 @@ def test_dynamic_adapters_register_as_dynamic():
     assert report["recon"]["kind"] == "dynamic"
     result = reg.run("dast", "http://127.0.0.1:8080")
     assert result.status == ToolStatus.OK
+
+
+def test_network_grant_refused_for_non_scanner(monkeypatch):
+    """A tool without allows_network is refused a network grant (isolation)."""
+    import aegis.tools.base as base
+
+    class LocalTool(base.DockerBackedTool):
+        name, image = "localtool", "img:1"
+        def argv(self, target, **o):
+            return ["echo"]
+
+    monkeypatch.setattr(base, "docker_available", lambda: True)
+    monkeypatch.setattr(base, "image_present", lambda i: True)
+    r = LocalTool(parser=lambda raw, t: []).run("example.com", network="bridge")
+    assert r.status == ToolStatus.ERROR
+    assert "not a network scanner" in r.errors[0]
+
+
+def test_recon_allows_network_but_refuses_local_path(monkeypatch, tmp_path):
+    import aegis.tools.base as base
+    monkeypatch.setattr(base, "docker_available", lambda: True)
+    monkeypatch.setattr(base, "image_present", lambda i: True)
+    tool = recon.make_docker()
+    assert tool.allows_network is True
+    # a target that is actually a local path is refused for a network scan
+    r = tool.run(str(tmp_path), network="bridge")
+    assert r.status == ToolStatus.ERROR and "local path" in r.errors[0]

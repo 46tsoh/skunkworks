@@ -71,6 +71,7 @@ def parse(raw: str, target: str) -> List[Candidate]:
 
 class ZapDockerTool(DockerBackedTool):
     name = "dast"
+    allows_network = True  # remote DAST scanner (ZAP)
     kind = ToolKind.DYNAMIC
     image = IMAGE
 

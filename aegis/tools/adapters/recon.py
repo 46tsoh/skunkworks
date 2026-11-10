@@ -94,6 +94,7 @@ class ReconDockerTool(DockerBackedTool):
     name = "recon"
     kind = ToolKind.DYNAMIC
     image = IMAGE
+    allows_network = True  # remote network scanner (nmap)
 
     def argv(self, target: str, **opts):
         # -sV service/version detection, XML to stdout. Target is a host/IP the
