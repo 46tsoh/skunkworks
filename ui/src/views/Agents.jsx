@@ -105,6 +105,11 @@ export default function Agents({ model }) {
               <span className="text-[var(--color-muted)]">
                 <span className="font-semibold text-[var(--color-ink)] tabular-nums">{forAgent.length}</span> events
               </span>
+              {selected.tokens > 0 && (
+                <span className="text-[var(--color-muted)]">
+                  <span className="font-semibold text-[var(--color-ink)] tabular-nums">{selected.tokens.toLocaleString()}</span> tokens
+                </span>
+              )}
             </div>
             {hasTranscript
               ? <Transcript events={forAgent} roleOf={roleOf} compact />

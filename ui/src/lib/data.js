@@ -103,11 +103,15 @@ export function agentsFromEvents(events) {
       byId[e.agent_id] = {
         id: e.agent_id, role: e.role, task: e.task,
         parent_id: e.parent_id ?? null, status: "running",
-        steps_spent: 0, trajectory: [],
+        steps_spent: 0, tokens: 0, trajectory: [],
       };
     } else if (byId[e.agent_id]) {
-      if (e.type === "status") byId[e.agent_id].status = e.status;
-      else if (e.type === "tool_call" || e.type === "decision") byId[e.agent_id].steps_spent++;
+      if (e.type === "status") {
+        byId[e.agent_id].status = e.status;
+        if (e.tokens != null) byId[e.agent_id].tokens = e.tokens;
+      } else if (e.type === "tool_call" || e.type === "decision") {
+        byId[e.agent_id].steps_spent++;
+      }
     }
   }
   return Object.values(byId);

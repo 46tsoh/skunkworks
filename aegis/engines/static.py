@@ -99,6 +99,10 @@ class StaticEngine:
     def set_event_sink(self, sink) -> None:
         self._events = sink
 
+    def _usage_total(self) -> int:
+        u = getattr(self._planner, "usage", None)
+        return (u["input_tokens"] + u["output_tokens"]) if u else 0
+
     def _turn(self, task: str, state: str) -> dict:
         """One researcher turn: generative when a planner is present, else a
         deterministic scripted narration (keeps offline runs reproducible)."""
@@ -136,6 +140,7 @@ class StaticEngine:
                 task="hypothesis-driven static audit", parent_id=None)
         ev.emit("s0001", "status", status="running")
 
+        rtokens = 0  # generative tokens attributed to the researcher
         # Seed hypotheses, each scored for priority (a typed score decision).
         self.hypotheses = []
         self.coverage = CoverageLedger()
@@ -169,9 +174,11 @@ class StaticEngine:
         for hyp in queue:
             cand = hyp.candidate
             # The researcher takes a generative turn on this hypothesis.
+            _u = self._usage_total()
             turn = self._turn(f"investigate {cand.title}",
                               f"{cand.title} ({cand.cwe}) in {cand.component}, "
                               f"priority {hyp.priority:.1f}/10")
+            rtokens += self._usage_total() - _u
             ev.emit("s0001", "assistant", text=turn["assistant"])
             if turn["think"]:
                 ev.emit("s0001", "think", text=turn["think"])
@@ -200,8 +207,10 @@ class StaticEngine:
                 # The researcher writes why it matters (generative modes).
                 if self._planner is not None:
                     from aegis.llm import explain_finding
+                    _u = self._usage_total()
                     rationale = explain_finding(self._planner, cand.title,
                                                 cand.evidence)
+                    rtokens += self._usage_total() - _u
                     if rationale:
                         outcome.finding.rationale = rationale
                 kb.add_finding(outcome.finding)
@@ -219,7 +228,7 @@ class StaticEngine:
                 hyp.status = HypothesisStatus.REJECTED
                 stage_counts[outcome.stage] += 1
 
-        ev.emit("s0001", "status", status="completed")
+        ev.emit("s0001", "status", status="completed", tokens=rtokens)
         ev.emit("s0001", "finish",
                 summary=f"{len([h for h in self.hypotheses if h.status.value == 'accepted'])} hypotheses confirmed")
         kb.rank()
