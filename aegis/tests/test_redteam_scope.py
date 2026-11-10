@@ -264,6 +264,33 @@ def test_load_rejects_unusable_host_entry(tmp_path):
         load_scope(p)
 
 
+def test_url_backslash_and_userinfo_refused_up_front():
+    s = _scope(urls=["http://target.htb/"], hosts=["target.htb"])
+    assert not s.is_in_scope("http://target.htb\\@evil.com/")   # backslash authority
+    assert not s.is_in_scope("http://u:p@target.htb/")          # userinfo present
+    assert "ambiguous" in s.check("http://u:p@target.htb/").reason
+
+
+def test_url_double_encoded_traversal_refused():
+    s = _scope(urls=["http://target.htb/app/"])
+    assert not s.is_in_scope("http://target.htb/app/%252e%252e/admin")  # %25 → %
+    assert not s.is_in_scope("http://target.htb/app/..%00/x")           # ..-prefixed seg
+
+
+def test_url_path_param_and_backslash_refused():
+    s = _scope(urls=["http://target.htb/app/"])
+    assert not s.is_in_scope("http://target.htb/app/x;jsessionid=1")    # ; param
+    assert not s.is_in_scope("http://target.htb/app\\x")                # backslash path
+
+
+def test_bracketed_host_must_be_valid_ipv6():
+    s = _scope(hosts=["::1"])
+    assert s.is_in_scope("[::1]") and s.is_in_scope("[::1]:8080")
+    assert not s.is_in_scope("[::1]junk")        # junk after ]
+    assert not s.is_in_scope("[not-an-ip]")      # brackets w/o IPv6
+    assert not s.is_in_scope("[::1")             # no closing bracket
+
+
 def test_example_scope_file_loads():
     # the shipped example must stay valid
     s = load_scope("data/examples/engagement.scope.json")
