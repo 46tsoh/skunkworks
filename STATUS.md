@@ -62,6 +62,8 @@ action named. Nothing here is faked to look finished.
 | 13 | `aegis scan` — authorized live scanning against an external target, driven through the full agent loop → dashboard | **done** (merged #16, #19, #20) | — (`--authorized`-gated, scanners-only, per-agent tokens) |
 | 14 | All three network-scanner categories live-proven against authorized internet targets | **done** (merged #22, #23) | — recon/nmap (scanme.nmap.org), web/nuclei (testphp.vulnweb.com), dast/ZAP passive+active (demo.testfire.net → live SQLi + XSS) |
 | 15 | RAPTOR static tools live-proven on real code (offline, local) | **done** (merged #25, #26, #27) | — sca/Trivy (74 real CVEs), semgrep (6 SAST findings), codeql (4 dataflow source→sink: code/command/SQL-injection, URL-redirect) |
+| 16 | Red-team engine — engagement-scope authorization gate | **done** (merged #29, #30, #31) | — default-deny `EngagementScope`; 3 rounds of parser-differential hardening |
+| 17 | Red-team stage 1 — bounded exploit→verify (`aegis exploit`) | **done** | — scope-gated, non-destructive; XSS/boolean-SQLi/open-redirect; live-proven (reflected XSS confirmed on demo.testfire.net; out-of-scope refused) |
 
 ### Open follow-ups (not blocking)
 

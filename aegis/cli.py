@@ -257,6 +257,57 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_exploit(args: argparse.Namespace) -> int:
+    """Stage-1 red-team: confirm one weakness on an IN-SCOPE target, then stop.
+
+    Two gates, both required: --authorized (operator asserts permission) and a
+    --scope engagement file every action is checked against. Non-destructive:
+    the engine sends a few marker probes and verifies by an observable oracle;
+    no shell, persistence, or lateral movement (later, scope-gated stages).
+    """
+    if not args.authorized:
+        print("Refusing: `aegis exploit` sends real (non-destructive) attack "
+              "probes to a target. Re-run with --authorized to confirm you are "
+              "permitted to test it, and pass --scope with an engagement file.",
+              file=sys.stderr)
+        return 2
+
+    from aegis.redteam import RedTeamEngine, load_scope
+    from aegis.redteam.scope import ScopeError
+
+    try:
+        scope = load_scope(args.scope)
+    except ScopeError as exc:
+        print(f"scope error: {exc}", file=sys.stderr)
+        return 2
+
+    events = []
+    engine = RedTeamEngine(scope, on_event=events.append)
+    print(f"[exploit] {args.type} on {args.target}  (param {args.param!r}, "
+          f"engagement {scope.engagement or 'unnamed'!r})")
+    result = engine.attempt(args.type, args.target, args.param)
+
+    if not result.in_scope:
+        print(f"  REFUSED — {result.note}", file=sys.stderr)
+        return 2
+    if not result.attempted:
+        print(f"  {result.note}", file=sys.stderr)
+        return 2
+    status = "CONFIRMED" if result.verified else "not confirmed"
+    print(f"  {status}  [{result.cwe}]  {result.requests} request(s)")
+    if result.proof:
+        print(f"  proof: {result.proof}")
+    for e in result.evidence:
+        print(f"    - {e}")
+    if args.out:
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(json.dumps(
+            {"result": result.as_dict(), "events": events,
+             "engagement": scope.engagement}, indent=2), encoding="utf-8")
+        print(f"\nWrote {args.out}")
+    return 0 if result.verified else 1
+
+
 def _cmd_calibrate(args: argparse.Namespace) -> int:
     from aegis.calibration import calibrate, recommended_thresholds
     report = calibrate(args.corpus, backend=args.backend,
@@ -412,6 +463,26 @@ def build_parser() -> argparse.ArgumentParser:
                         help="directory for the run (report.json + events.jsonl "
                              "+ decisions.jsonl) — view it in the dashboard")
     scan_p.set_defaults(func=_cmd_scan)
+
+    exp = sub.add_parser(
+        "exploit", help="stage-1 red-team: confirm ONE weakness on an IN-SCOPE "
+                        "target (non-destructive), then stop at proof")
+    exp.add_argument("--target", required=True,
+                     help="target URL you are authorized to test")
+    exp.add_argument("--param", required=True,
+                     help="request parameter to probe")
+    exp.add_argument("--type", required=True,
+                     choices=["xss", "sqli", "redirect"],
+                     help="weakness class to confirm")
+    exp.add_argument("--scope", required=True, type=Path,
+                     help="engagement scope file (JSON/YAML); every action is "
+                          "checked against it and refused if out of scope")
+    exp.add_argument("--authorized", action="store_true",
+                     help="confirm you are permitted to test this target "
+                          "(required)")
+    exp.add_argument("--out", type=Path, default=None,
+                     help="write the result + audit events to this JSON file")
+    exp.set_defaults(func=_cmd_exploit)
 
     cal = sub.add_parser("calibrate",
                          help="calibrate decision thresholds on a labeled corpus")

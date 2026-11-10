@@ -11,5 +11,9 @@ from aegis.redteam.scope import (
     ScopeError,
     load_scope,
 )
+from aegis.redteam.engine import ExploitResult, RedTeamEngine
 
-__all__ = ["EngagementScope", "ScopeDecision", "ScopeError", "load_scope"]
+__all__ = [
+    "EngagementScope", "ScopeDecision", "ScopeError", "load_scope",
+    "RedTeamEngine", "ExploitResult",
+]
