@@ -114,7 +114,9 @@ export function deriveModel(report, decisions) {
     rejected: report.rejected || [],
     engines,
     graph: (dyn.extra && dyn.extra.graph) || [],
-    transcript: (dyn.extra && dyn.extra.transcript) || [],
+    // Unified agent transcript across both engines (orchestrator-owned), with a
+    // fallback to the dynamic engine's own snapshot for older runs.
+    transcript: report.transcript || (dyn.extra && dyn.extra.transcript) || [],
     hypotheses: (stat.extra && stat.extra.hypotheses) || [],
     coverage: (stat.extra && stat.extra.coverage) || {},
     toolRuns: engines.flatMap((e) =>

@@ -7,6 +7,7 @@ const ROLE_LABEL = {
   recon: "Recon",
   exploitation: "Exploitation",
   post_exploitation: "Post-exploitation",
+  researcher: "Researcher",
 };
 
 function statusColor(status) {
@@ -25,20 +26,23 @@ export default function Agents({ model }) {
   const reportTranscript = model.transcript || [];
   const live = liveEvents.length > reportTranscript.length;
   const transcript = live ? liveEvents : reportTranscript;
-  const graph = useMemo(
-    () => (live ? agentsFromEvents(liveEvents) : model.graph || []),
-    [live, liveEvents, model.graph]
-  );
+  // Build the graph from the unified transcript (both engines' agents) when it
+  // carries spawn events; else fall back to the dynamic engine's snapshot.
+  const graph = useMemo(() => {
+    if (transcript.some((e) => e.type === "spawn")) return agentsFromEvents(transcript);
+    return model.graph || [];
+  }, [transcript, model.graph]);
 
-  const root = graph.find((n) => !n.parent_id) || graph[0];
-  const children = graph.filter((n) => n.parent_id);
+  const roots = graph.filter((n) => !n.parent_id);
+  const childrenOf = (id) => graph.filter((n) => n.parent_id === id);
 
-  const [selectedId, setSelectedId] = useState(root?.id ?? null);
+  const [picked, setSelectedId] = useState(null);
+  const selectedId = picked ?? roots[0]?.id ?? null;
   const roleOf = useMemo(
     () => Object.fromEntries(graph.map((n) => [n.id, n.role])),
     [graph]
   );
-  const selected = graph.find((n) => n.id === selectedId) || root || null;
+  const selected = graph.find((n) => n.id === selectedId) || null;
   const forAgent = useMemo(
     () => transcript.filter((e) => e.agent_id === selectedId),
     [transcript, selectedId]
@@ -75,7 +79,12 @@ export default function Agents({ model }) {
           <p className="mb-3 text-[12px] text-[var(--color-faint)]">
             Select an agent to read its transcript.
           </p>
-          <AgentGraph root={root} children={children} selectedId={selectedId} onSelect={setSelectedId} />
+          <div className="space-y-4">
+            {roots.map((r) => (
+              <AgentGraph key={r.id} root={r} children={childrenOf(r.id)}
+                          selectedId={selectedId} onSelect={setSelectedId} />
+            ))}
+          </div>
         </Panel>
 
         {selected && (
@@ -233,7 +242,7 @@ function argStr(args) {
   return Object.entries(args).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(", ");
 }
 function label(id) {
-  return { a0001: "Coordinator", a0002: "Recon", a0003: "Exploitation" }[id] || id;
+  return { a0001: "Coordinator", a0002: "Recon", a0003: "Exploitation", s0001: "Researcher" }[id] || id;
 }
 function outcomeColor(o) {
   if (/exploit|true_positive|finding/i.test(o)) return "var(--color-ok)";
