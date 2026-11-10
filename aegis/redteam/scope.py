@@ -306,6 +306,16 @@ def _coerce(raw: dict, source: str) -> EngagementScope:
     # refuse a scope that mixes an IP/CIDR deny with hostname allows, or a
     # hostname deny with IP/CIDR allows — otherwise the deny could be silently
     # unenforceable against a differently-expressed target.
+    # Preserve an explicit max_hosts: 0 (means "no pivots") — the `x or 1` idiom
+    # would silently turn it into 1 and still pivot once.
+    mh = limits.get("max_hosts", 1)
+    try:
+        max_hosts = 1 if mh is None else int(mh)
+    except (TypeError, ValueError):
+        raise ScopeError(f"{source}: max_hosts must be an integer, got {mh!r}")
+    if max_hosts < 0:
+        raise ScopeError(f"{source}: max_hosts must be >= 0, got {max_hosts}")
+
     allow_ip = any(_ip_form(e) for e in hosts)
     allow_name = any(not _ip_form(e) for e in hosts)
     for e in deny_hosts:
@@ -325,7 +335,7 @@ def _coerce(raw: dict, source: str) -> EngagementScope:
         hosts=hosts,
         urls=urls,
         deny_hosts=deny_hosts,
-        max_hosts=int(limits.get("max_hosts", 1) or 1),
+        max_hosts=max_hosts,
         allow_lateral=bool(limits.get("allow_lateral", False)),
         allow_post_exploit=bool(limits.get("allow_post_exploit", False)),
     )
