@@ -78,6 +78,29 @@ aegis run --target /path/to/repo --use-tools --out ui/public/data
   query packs ship in the image. Builds a DB then analyzes (slow; far slower if
   the image is emulated on a non-amd64 host).
 
+### Autonomous red-team (scope-gated) — `aegis exploit`
+
+Aegis's second use case (OSAI / CTF): the engine *acts* on a weakness to produce
+proof. Stage 1 chains **confirm → verify → stop** — a few non-destructive marker
+probes for reflected XSS, boolean/error SQL injection, or open redirect, verified
+by an observable oracle. No shell, persistence, or lateral movement (later,
+scope-gated stages). See [`docs/specs/red-team-engine.md`](docs/specs/red-team-engine.md).
+
+Two gates are required: `--authorized` **and** a `--scope` engagement file that
+every action is checked against (default-deny; out-of-scope targets are refused
+before any request is sent).
+
+```bash
+# engagement.scope.json lists exactly what may be touched (see data/examples/)
+aegis exploit --target http://demo.testfire.net/search.jsp --param query \
+              --type xss --scope engagement.scope.json --authorized
+#   CONFIRMED  [CWE-79]  1 request(s)
+#   proof: reflected XSS confirmed on 'query': payload echoed unencoded into HTML
+```
+
+Scan only targets you own, public test ranges, or competition/CTF targets you are
+permitted to test — never arbitrary third parties.
+
 ## Tools
 
 17 capability adapters sit behind one `Tool` interface (`aegis.tools`) — static
