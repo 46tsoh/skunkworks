@@ -1,0 +1,39 @@
+{
+  "version": "1.95.0",
+  "results": [
+    {
+      "check_id": "python.lang.security.audit.formatted-sql-query.formatted-sql-query",
+      "path": "api/auth/login.py",
+      "start": {"line": 42, "col": 5},
+      "end": {"line": 42, "col": 60},
+      "extra": {
+        "message": "Detected possible formatted SQL query. Use parameterized queries instead.",
+        "severity": "ERROR",
+        "metadata": {"cwe": ["CWE-89: Improper Neutralization of Special Elements used in an SQL Command"], "owasp": ["A03:2021 - Injection"]}
+      }
+    },
+    {
+      "check_id": "python.django.security.audit.xss.direct-use-of-httpresponse",
+      "path": "web/search.py",
+      "start": {"line": 88, "col": 12},
+      "end": {"line": 88, "col": 50},
+      "extra": {
+        "message": "Reflected user input into HttpResponse without escaping (XSS).",
+        "severity": "WARNING",
+        "metadata": {"cwe": ["CWE-79: Improper Neutralization of Input During Web Page Generation"], "owasp": ["A03:2021 - Injection"]}
+      }
+    },
+    {
+      "check_id": "python.lang.security.audit.weak-hash.sha1",
+      "path": "api/auth/hashing.py",
+      "start": {"line": 19, "col": 9},
+      "end": {"line": 19, "col": 40},
+      "extra": {
+        "message": "Use of weak hash (SHA-1) for password storage.",
+        "severity": "WARNING",
+        "metadata": {"cwe": ["CWE-327: Use of a Broken or Risky Cryptographic Algorithm"]}
+      }
+    }
+  ],
+  "errors": []
+}
