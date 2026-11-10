@@ -95,6 +95,11 @@ def _print_run(result) -> None:
         else:
             print(f"  engine {r.name:8} [{r.kind:7}] SKIPPED ({r.skipped_reason or r.error})")
     m = kb.metrics
+    if m.get("degraded"):
+        fails = m.get("tool_failures", [])
+        detail = ", ".join("{}:{}={}".format(f["engine"], f["name"], f["status"])
+                           for f in fails) or "engine error"
+        print(f"  ! run DEGRADED: {len(fails)} tool(s) did not complete ({detail})")
     print(f"cross-engine dedup collapsed {m['cross_engine_dedup']} finding(s)")
     print(f"unified: accepted={m['accepted']} rejected={m['rejected']}  "
           f"severity={kb.severity_counts()}  engines={kb.engine_counts()}")

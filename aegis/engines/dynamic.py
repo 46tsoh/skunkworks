@@ -92,6 +92,7 @@ class DynamicEngine:
         self._max_steps = max_steps
         self._registry = registry
         self._tool_names = tool_names
+        self._tool_runs: list = []
         self.graph: List[AgentNode] = []
 
     def available(self) -> bool:
@@ -100,8 +101,9 @@ class DynamicEngine:
     def enumerate_candidates(self, target: str,
                              config: AegisConfig) -> Sequence[Candidate]:
         if self._registry is not None:
-            return _candidates_from_tools(self._registry, self.kind, target,
-                                          self._tool_names)
+            cands, self._tool_runs = _candidates_from_tools(
+                self._registry, self.kind, target, self._tool_names)
+            return cands
         path = Path(target or _DEFAULT_TARGET)
         if path.is_dir():
             path = path / "candidates_dynamic.json"
@@ -187,7 +189,10 @@ class DynamicEngine:
             rejected=len(kb.rejected), stage_counts=stage_counts,
             duration_ms=(time.perf_counter() - t0) * 1000.0,
             extra={"graph": [n.as_dict() for n in self.graph],
-                   "steps_spent": budget.steps_spent},
+                   "steps_spent": budget.steps_spent,
+                   "tool_runs": self._tool_runs,
+                   "degraded": any(r["status"] not in ("ok",)
+                                   for r in self._tool_runs)},
         )
 
     @staticmethod
