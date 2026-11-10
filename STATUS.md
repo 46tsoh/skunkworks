@@ -19,15 +19,42 @@ action named. Nothing here is faked to look finished.
 
 | # | Milestone | State | Next action |
 |---|-----------|-------|-------------|
-| 1 | Core `aegis/` package (unified Finding/KnowledgeBase, DecisionRouter, config/env, CLI, tests) | **done** | — |
-| 2 | Orchestration core: one orchestrator, two pluggable engines (dynamic graph-of-agents + static hypothesis loop), shared KB + router | **not started** | spec both engines in `docs/specs/`, then implement |
-| 3 | Tool/scanner adapters behind a common `Tool` interface (dynamic + static capabilities) | **not started** | spec `Tool` iface; implement offline-capable adapters first (semgrep, SCA, recon on sample) |
-| 4 | Analysis parity through the decision layer (exploitability chain + hypothesis posterior + triage/dedup/CVSS), calibrated on a labeled corpus | **partial** | pipeline exists (M1); add labeled corpus + calibration metrics tool |
+| 1 | Core `aegis/` package (unified Finding/KnowledgeBase, DecisionRouter, config/env, CLI, tests) | **done** (merged #3) | — |
+| 2 | Orchestration core: one orchestrator, two pluggable engines (dynamic graph-of-agents + static hypothesis loop), shared KB + router | **done** | — (specs in `docs/specs/`, `aegis.engines`, `aegis run`) |
+| 3 | Tool/scanner adapters behind a common `Tool` interface (dynamic + static capabilities) | **not started** | spec written (`docs/specs/tool-interface.md`); implement `aegis.tools` registry + offline fixture adapters first (semgrep, SCA, recon), then binary adapters |
+| 4 | Analysis parity through the decision layer (exploitability chain + hypothesis posterior + triage/dedup/CVSS), calibrated on a labeled corpus | **partial** | pipeline + both engines route through the decision layer (M1/M2); add labeled corpus + calibration metrics tool |
 | 5 | Unified UI (Vite + React + Tailwind) over both engines | **not started** | scaffold after M2 exposes a run/report API |
 | 6 | End-to-end interop: one command runs both engines over the sample target → one unified deduped report + dashboard | **not started** | depends on M2, M5 |
-| 7 | Docs, tests, CI (README, architecture doc, >80% core coverage, CI) | **partial** | arch map + README done; add GitHub Actions CI |
+| 7 | Docs, tests, CI (README, architecture doc, >80% core coverage, CI) | **partial** | arch map + README done; add GitHub Actions CI (user-approved) running pytest + UI build on every PR |
 
-## Milestone 1 — done (this PR)
+## Milestone 2 — done
+
+- Clean-room specs authored first (upstream closed during implementation):
+  `docs/specs/{orchestrator,dynamic-engine,static-engine,tool-interface}.md`.
+- `aegis.engines` — `Orchestrator` driving two pluggable engines that share one
+  `DecisionRouter` + one `KnowledgeBase`:
+  - `DynamicEngine` (Strix-style graph-of-agents loop; routing via
+    `DecisionRouter.choose`, triage via `.gate`, promotion via the shared stages),
+  - `StaticEngine` (RAPTOR-style hypothesis queue; priority via
+    `DecisionRouter.score`, then triage → posterior → dedupe → validate → score).
+- Cross-engine dedup through the same `dedupe.same_vuln` decision; one unified,
+  ranked report. `parallel` and serial runs yield identical results.
+- **`aegis.llm`** — standard generative LLM provider (OpenAI-compatible,
+  local-first, `AEGIS_LLM*` env), usable as the `llm` **decision backend**
+  (Strix-style "standard model decides") and for generative summaries; offline
+  `TemplateLLM` fallback so no server is required.
+- Bundled sample target (`data/sample_target/`) with a deliberate cross-engine
+  duplicate; `aegis run` executes both engines over it.
+- Tests: **95 passing**, **95%** coverage on `aegis`.
+
+### Verify milestone 2
+```bash
+.venv/bin/pytest --cov=aegis            # 95 passed, ~95% coverage
+.venv/bin/aegis run --serial            # both engines over the sample target
+.venv/bin/aegis run --backend llm       # standard-model decision path (offline)
+```
+
+## Milestone 1 — done (merged #3)
 
 - `aegis/` installable package (`pyproject.toml`, `aegis` console script).
 - `aegis.decision` — typed decision layer (router + client + Jev/basal/LLM-judge/static backends + Strix/RAPTOR integration adapters), promoted from `reference/jev`.

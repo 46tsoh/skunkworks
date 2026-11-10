@@ -1,0 +1,42 @@
+[
+  {
+    "id": "S1",
+    "title": "Unsanitized SQL in authentication query",
+    "cwe": "CWE-89",
+    "component": "api/auth/login.py:42",
+    "cvss_vector": "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+    "description": "Source audit: request username is concatenated into a SQL string in the login handler (same defect the dynamic engine exercises).",
+    "evidence": ["taint: request.form['username'] -> cursor.execute(f-string)", "no parameterized query on this path"],
+    "hints": {"true_positive_prob": 0.9, "evidence_strength": 0.85, "exploit_stages_pass": 8, "duplicate_of": "D1"}
+  },
+  {
+    "id": "S2",
+    "title": "Possible hardcoded secret in config loader",
+    "cwe": "CWE-798",
+    "component": "config/loader.py:10",
+    "cvss_vector": "AV:L/AC:L/PR:L/UI:N/S:U/C:L/I:N/A:N",
+    "description": "Pattern-matched a string that looks like a key, but it is the vendor's documented public sandbox test key.",
+    "evidence": ["string matches secret regex", "value is the vendor's published sandbox test key"],
+    "hints": {"true_positive_prob": 0.12, "evidence_strength": 0.3, "exploit_stages_pass": 1}
+  },
+  {
+    "id": "S3",
+    "title": "Buffer over-read in log line parser",
+    "cwe": "CWE-125",
+    "component": "native/logparse.c:88",
+    "cvss_vector": "AV:L/AC:H/PR:L/UI:N/S:U/C:L/I:N/A:L",
+    "description": "A length field is trusted without bounds check; a crafted local log line reads past the buffer. Not reachable from an external entry point.",
+    "evidence": ["memcpy length from attacker-influenced header", "no bounds check", "local log files only"],
+    "hints": {"true_positive_prob": 0.8, "evidence_strength": 0.7, "exploit_stages_pass": 2}
+  },
+  {
+    "id": "S4",
+    "title": "Weak hashing of stored passwords (unsalted SHA-1)",
+    "cwe": "CWE-327",
+    "component": "api/auth/hashing.py:19",
+    "cvss_vector": "AV:N/AC:H/PR:H/UI:N/S:U/C:H/I:N/A:N",
+    "description": "Passwords are stored as unsalted SHA-1; offline cracking is practical if the store leaks.",
+    "evidence": ["hashlib.sha1(password) with no salt", "no KDF / work factor"],
+    "hints": {"true_positive_prob": 0.85, "evidence_strength": 0.8, "exploit_stages_pass": 8}
+  }
+]

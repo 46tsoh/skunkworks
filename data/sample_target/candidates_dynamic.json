@@ -1,0 +1,42 @@
+[
+  {
+    "id": "D1",
+    "title": "SQL injection in login handler",
+    "cwe": "CWE-89",
+    "component": "POST /login (username)",
+    "cvss_vector": "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+    "description": "Black-box: a quote in the username field changes the login response, indicating unparameterized SQL.",
+    "evidence": ["error-based oracle on ' payload", "boolean-based blind confirmed", "unauthenticated /login endpoint"],
+    "hints": {"true_positive_prob": 0.95, "evidence_strength": 0.9, "exploit_stages_pass": 8}
+  },
+  {
+    "id": "D2",
+    "title": "Reflected XSS in search results",
+    "cwe": "CWE-79",
+    "component": "GET /search (q)",
+    "cvss_vector": "AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N",
+    "description": "The q parameter is reflected unescaped into the results page; a script payload executes.",
+    "evidence": ["payload <svg onload> reflected unescaped", "no CSP header observed", "executes in headless browser"],
+    "hints": {"true_positive_prob": 0.9, "evidence_strength": 0.82, "exploit_stages_pass": 8}
+  },
+  {
+    "id": "D3",
+    "title": "SSRF in webhook URL fetch",
+    "cwe": "CWE-918",
+    "component": "POST /webhooks (callback_url)",
+    "cvss_vector": "AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:L/A:N",
+    "description": "The callback_url is fetched server-side with no allowlist; internal metadata endpoints are reachable.",
+    "evidence": ["fetch of http://127.0.0.1 returns internal page", "no host allowlist", "authenticated low-priv user"],
+    "hints": {"true_positive_prob": 0.9, "evidence_strength": 0.85, "exploit_stages_pass": 8}
+  },
+  {
+    "id": "D4",
+    "title": "Verbose stack trace on error page",
+    "cwe": "CWE-209",
+    "component": "GET /app (500 page)",
+    "cvss_vector": "AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N",
+    "description": "A 500 page shows a framework stack trace. Informational; dev profile only, not reachable in the shipped config.",
+    "evidence": ["stack trace visible on crafted 500", "only with DEBUG=1 which ships disabled"],
+    "hints": {"true_positive_prob": 0.15, "evidence_strength": 0.3, "exploit_stages_pass": 1}
+  }
+]

@@ -114,6 +114,15 @@ def build_router(
         client = DecisionClient(primary=BasalOmniBackend(), fallback=hint)
     elif config.backend == "jev":
         client = DecisionClient(primary=JevBackend(), fallback=hint)
+    elif config.backend == "llm":
+        # A standard generative LLM driving the typed decisions (Strix-style),
+        # local-first, with the offline HintBackend as the fallback.
+        from aegis.llm import build_llm, judge_backend
+        provider = build_llm(
+            model=config.llm_model, api_base=config.llm_api_base,
+            api_key=config.llm_api_key, local_only=config.local_only,
+        )
+        client = DecisionClient(primary=judge_backend(provider), fallback=hint)
     else:  # pragma: no cover - AegisConfig validates this
         raise ValueError(f"unknown backend {config.backend!r}")
 

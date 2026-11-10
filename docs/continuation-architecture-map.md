@@ -69,8 +69,20 @@ Hypothesis-driven security-*research* framework. Relevant architecture:
                      └──────────────────────────────┘
 ```
 
-**Built so far (M1):** `aegis.decision`, `aegis.knowledge`, `aegis.config`,
-`aegis.analysis` (the decision-stage pipeline), `aegis.cli analyze`.
+**Built so far:**
+- **M1:** `aegis.decision`, `aegis.knowledge`, `aegis.config`, `aegis.analysis`
+  (the decision-stage pipeline), `aegis.cli analyze`.
+- **M2:** `aegis.engines` (`Orchestrator` + `DynamicEngine` + `StaticEngine`
+  over one shared router + KB, cross-engine dedup, `aegis run`) and `aegis.llm`
+  (standard local-first LLM provider, also selectable as the `llm` decision
+  backend). Specs in `docs/specs/`.
+
+**Model seams.** Aegis uses models two ways, like Strix split from its decision
+logic: a **standard generative LLM** (`aegis.llm`, OpenAI-compatible, local-first
+— "writes & plans") and the **typed decision layer** (`aegis.decision` — "decides").
+A standard LLM can also *be* the decision backend (`--backend llm`) via the
+LLM-judge bridge. Both default to offline/localhost; remote egress is gated by
+`AegisConfig.local_only`.
 
 **Key unifying ideas:**
 1. **One decision router.** Every branch either engine takes (triage, dedup,
