@@ -22,4 +22,16 @@ if docker image inspect projectdiscovery/nuclei:v3.3.5 >/dev/null 2>&1; then
     && echo "   templates ready" || echo "   (template provisioning failed)"
 fi
 
+# Trivy ships no vulnerability DB in its image and cannot download it under
+# --network none. Provision it once (this needs network) into a named volume
+# that the `sca` adapter mounts read-write at scan time; the scan itself then
+# runs offline. Only needed for live `sca` scans; safe to skip otherwise.
+if docker image inspect aquasec/trivy:0.58.1 >/dev/null 2>&1; then
+  echo "==> provisioning Trivy vuln DB into volume aegis-trivy-cache"
+  docker run --rm -v aegis-trivy-cache:/root/.cache/trivy \
+    aquasec/trivy:0.58.1 fs --download-db-only --cache-dir /root/.cache/trivy \
+    >/dev/null 2>&1 \
+    && echo "   vuln DB ready" || echo "   (Trivy DB provisioning failed)"
+fi
+
 echo "Done. Check availability with:  aegis tools"

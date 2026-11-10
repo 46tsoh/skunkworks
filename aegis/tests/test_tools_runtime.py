@@ -47,6 +47,19 @@ def test_run_container_mounts_named_volume(monkeypatch):
     assert "aegis-nuclei-templates:/root/nuclei-templates:ro" in captured["cmd"]
 
 
+def test_run_container_rw_named_volume_is_writable(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(rt.subprocess, "run",
+                        lambda cmd, **k: (captured.__setitem__("cmd", cmd)
+                                          or subprocess.CompletedProcess(cmd, 0, "", "")))
+    rt.run_container("img:1", ["fs"], network="none",
+                     rw_volumes=[("aegis-trivy-cache", "/root/.cache/trivy")])
+    cmd = captured["cmd"]
+    # writable named volume → no :ro suffix (unlike the read-only `volumes`)
+    assert "aegis-trivy-cache:/root/.cache/trivy" in cmd
+    assert "aegis-trivy-cache:/root/.cache/trivy:ro" not in cmd
+
+
 def test_web_tool_declares_templates_volume():
     from aegis.tools.adapters.web import make_docker
     assert make_docker().volumes() == [

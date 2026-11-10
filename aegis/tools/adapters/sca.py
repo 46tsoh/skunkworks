@@ -76,13 +76,24 @@ class ScaDockerTool(DockerBackedTool):
     kind = ToolKind.STATIC
     image = IMAGE
     timeout_s = 300.0
+    # Trivy ships no vuln DB in the image and cannot download it under
+    # --network none. The DB is provisioned once into a named volume (see
+    # docker/pull-images.sh) that is mounted read-WRITE here: Trivy reads the DB
+    # and writes its scan cache into the same cache dir. Nothing leaves the
+    # volume; the scan itself still runs offline (--network none).
+    CACHE_VOLUME = "aegis-trivy-cache"
+    CACHE_DIR = "/root/.cache/trivy"
+
+    def rw_volumes(self):
+        return [(self.CACHE_VOLUME, self.CACHE_DIR)]
 
     def argv(self, target: str, **opts):
         # Scan the read-only mount as a filesystem target, vuln scanner only,
-        # JSON to stdout. --offline-scan avoids any network lookups; the vuln DB
-        # must already be baked into the image (local-only guarantee).
+        # JSON to stdout. --skip-db-update + --offline-scan guarantee no network
+        # (the DB is already in the mounted cache); --cache-dir points at it.
         return ["fs", "--format", "json", "--quiet", "--scanners", "vuln",
-                "--offline-scan", self.container_workdir]
+                "--skip-db-update", "--offline-scan",
+                "--cache-dir", self.CACHE_DIR, self.container_workdir]
 
 
 def make_docker() -> ScaDockerTool:

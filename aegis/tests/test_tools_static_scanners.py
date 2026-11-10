@@ -165,6 +165,37 @@ def test_sca_parses_when_image_present(monkeypatch):
     assert result.metadata["image"] == sca.IMAGE
 
 
+def test_sca_argv_is_offline_and_uses_cache_volume():
+    """The sca scan must never touch the network: it skips the DB update, scans
+    offline, and reads the DB from the provisioned cache volume."""
+    tool = sca.make_docker()
+    argv = tool.argv("data/sample_target")
+    assert argv[0] == "fs"
+    assert "--skip-db-update" in argv and "--offline-scan" in argv
+    assert argv[argv.index("--cache-dir") + 1] == tool.CACHE_DIR
+    # the cache volume is mounted read-WRITE (Trivy writes its scan cache there)
+    assert tool.rw_volumes() == [(tool.CACHE_VOLUME, tool.CACHE_DIR)]
+    assert tool.volumes() == []  # not a read-only data volume
+
+
+def test_sca_cache_volume_mounted_writable(monkeypatch):
+    """run() must pass the sca cache as a read-WRITE named volume."""
+    import aegis.tools.base as base
+    from aegis.tools.runtime import ContainerRun
+    monkeypatch.setattr(base, "docker_available", lambda: True)
+    monkeypatch.setattr(base, "image_present", lambda image: True)
+    captured = {}
+
+    def fake_run(*a, **k):
+        captured.update(k)
+        return ContainerRun(0, sca._FIXTURE.read_text(), "")
+
+    monkeypatch.setattr(base, "run_container", fake_run)
+    result = sca.make_docker().run("data/sample_target")
+    assert result.status == ToolStatus.OK
+    assert captured["rw_volumes"] == [("aegis-trivy-cache", "/root/.cache/trivy")]
+
+
 def test_sca_error_is_caught(monkeypatch):
     import aegis.tools.base as base
     monkeypatch.setattr(base, "docker_available", lambda: True)
