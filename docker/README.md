@@ -30,5 +30,26 @@ on the host (git / python) and need no image.
 
 A few images are best-effort public references (noted in the adapter source):
 CodeQL has no single canonical public image; `crash` reuses the AFL++ image for
-its triage tooling. Swap the `IMAGE` constant in the adapter module if you
-prefer a different local image — the parser (the tested contract) is unchanged.
+its triage tooling; `proxy` (`mitmproxy/mitmproxy:11.1.3`, needs 11+ for the
+built-in `hardump` HAR addon) and `browser`
+(`zenika/alpine-chrome:124-with-puppeteer`) are pinned to published public tags.
+Swap the `IMAGE` constant in the adapter module if you prefer a different local
+image — the parser (the tested contract) is unchanged.
+
+## Client-side DAST (proxy / browser): offline file-report mechanics
+
+`proxy` and `browser` need no provisioned data volume — only their images:
+
+- **proxy** replays a mitmproxy flow dump the operator captures out-of-band
+  (`mitmdump -w flows` against an authorized target). At scan time the container
+  runs `mitmdump -n -r <flow>` (no proxy server → no network) and the built-in
+  `hardump` addon writes HAR into a writable report mount, read back and parsed.
+  The flow file is mounted read-only.
+- **browser** mounts the in-repo driver `drivers/browser_navlog.js` read-only and
+  runs it under `node` (the image entrypoint is overridden, as for CodeQL). The
+  driver drives the image's Chromium (`--no-sandbox …`) over a read-only mount of
+  a saved/served site loaded as `file://`, and writes the navigation-log JSON to
+  a writable report mount, read back and parsed.
+
+Both keep `--network none` and the ZAP-style file report. The offline fixtures
+pin the parsers byte-for-byte, so the suite passes with neither image present.

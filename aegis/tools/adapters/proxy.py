@@ -20,6 +20,22 @@ feeds the offline fixture adapter and the Docker-backed adapter, so the parser �
 the part that actually finds bugs — is pinned without any proxy binary or
 network. Running live stays local-only: the container is launched through
 :mod:`aegis.tools.runtime` with ``--network none`` and read-only mounts.
+
+Live mechanics (mirrors ZAP's file-report pattern):
+
+* The operator records traffic once with mitmproxy against an authorized target
+  (``mitmdump -w flows`` — a one-time, out-of-band capture) and points the
+  adapter at that recorded flow dump. The flow file is mounted **read-only**.
+* At scan time the container replays the recording completely offline
+  (``mitmdump -n -r`` — no proxy server is started, nothing touches the
+  network) and mitmproxy's built-in ``hardump`` addon converts the flows to a
+  HAR file in a **writable report mount** (see :meth:`DockerBackedTool.report_mount`).
+  We read that file back through the base class's hardened reader rather than
+  streaming HAR to stdout — ZAP taught us that a file report is the reliable
+  path.
+
+``hardump`` is built into mitmproxy 11+, so no addon script is mounted; the
+offline fixture still pins the parser byte-for-byte.
 """
 
 from __future__ import annotations
@@ -33,7 +49,11 @@ from aegis.knowledge.models import Candidate
 from aegis.tools.base import DockerBackedTool, FixtureTool, ToolKind
 from aegis.tools.util import make_candidate
 
-IMAGE = "mitmproxy/mitmproxy:11.1.3"  # best-effort public tag; see module notes
+# mitmproxy's maintained Docker Hub image. 11+ ships the built-in ``hardump``
+# HAR addon this adapter relies on; pin a published 11.x tag. Best-effort public
+# reference (verify/swap against Docker Hub if a different local image is built);
+# the parser — the tested contract — is unaffected by the tag. See docker/README.md.
+IMAGE = "mitmproxy/mitmproxy:11.1.3"
 _FIXTURE = Path(__file__).resolve().parents[3] / "data" / "fixtures" / "proxy" / "flows.har"
 
 # Defence-in-depth response headers we expect on an HTML response, in a fixed
@@ -164,13 +184,39 @@ class ProxyDockerTool(DockerBackedTool):
     name = "proxy"
     kind = ToolKind.DYNAMIC
     image = IMAGE
+    # mitmdump replays the recording in-process and exits 0; replaying a file
+    # never needs the network, so this adapter stays local-only (no
+    # allows_network — the default --network none holds).
+    container_workdir = "/aegis"
+    # The recorded mitmproxy flow dump, mounted read-only (the operator captured
+    # it out-of-band; it is the scan target, never written to).
+    INPUT_FLOW = "/aegis/in/flows"
+    # mitmproxy can only emit HAR to a file; request a fresh writable dir and
+    # read the HAR back from it (like ZAP's JSON report), not from stdout.
+    REPORT_DIR = "/aegis/out"
+    REPORT_FILE = "flows.har"
+
+    def report_mount(self):
+        return (self.REPORT_DIR, self.REPORT_FILE)
+
+    def mounts(self, target: str):
+        # Mount the recorded flow dump read-only. The target is the path to the
+        # operator's captured flows; a non-path target (e.g. a bare URL) mounts
+        # nothing and the live replay has no input (degrades to no findings),
+        # but the fixture/parser contract is unaffected.
+        p = Path(target)
+        if p.exists() and p.is_file():
+            return [(str(p), self.INPUT_FLOW)]
+        return []
 
     def argv(self, target: str, **opts):
-        # Replay a recorded flow file and dump it as HAR to stdout. The live path
-        # is best-effort (see module notes); the fixture pins the parser.
-        flow = opts.get("flow", f"{self.container_workdir}/flows")
-        return ["mitmdump", "--no-server", "-q", "-nr", flow,
-                "--set", "hardump=-"]
+        # Replay the read-only recording with no proxy server (``-n``: no
+        # network), quietly, and let the built-in hardump addon write HAR to the
+        # writable report mount. run() reads that file back and parses it.
+        flow = opts.get("flow", self.INPUT_FLOW)
+        report = opts.get("report_path", f"{self.REPORT_DIR}/{self.REPORT_FILE}")
+        return ["mitmdump", "-n", "-q", "-r", flow,
+                "--set", f"hardump={report}"]
 
 
 def make_docker() -> ProxyDockerTool:

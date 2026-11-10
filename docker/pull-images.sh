@@ -48,4 +48,19 @@ if docker image inspect semgrep/semgrep:1.95.0 >/dev/null 2>&1; then
     && echo "   rules ready" || echo "   (semgrep-rules provisioning failed)"
 fi
 
+# The proxy (mitmproxy) and browser (headless-Chromium) adapters need no
+# provisioned data volume: proxy replays a recorded flow file the operator
+# captures out-of-band, and browser mounts its driver (docker/drivers/
+# browser_navlog.js) and the saved/served target read-only at scan time. The
+# only requirement is their pinned images, pulled by the loop above. Both run
+# fully offline (--network none) at scan time.
+if docker image inspect mitmproxy/mitmproxy:11.1.3 >/dev/null 2>&1; then
+  echo "proxy: image ready — capture flows once with 'mitmdump -w flows' against"
+  echo "       an authorized target, then: aegis scan --tool proxy /path/to/flows"
+fi
+if docker image inspect zenika/alpine-chrome:124-with-puppeteer >/dev/null 2>&1; then
+  echo "browser: image ready — point it at a locally saved/served site:"
+  echo "         aegis scan --tool browser /path/to/saved-site"
+fi
+
 echo "Done. Check availability with:  aegis tools"

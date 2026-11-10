@@ -62,13 +62,50 @@ def test_proxy_unavailable_without_daemon(monkeypatch):
     assert tool.run("https://shop.example.com").status == ToolStatus.UNAVAILABLE
 
 
-def test_proxy_ok_when_image_present(monkeypatch):
+def test_proxy_declares_report_mount():
+    # mitmproxy can only emit HAR to a file in a mounted dir; the tool must ask
+    # for a writable report mount so run() reads the HAR back (like ZAP).
+    cdir, fname = proxy.make_docker().report_mount()
+    assert cdir == "/aegis/out" and fname.endswith(".har")
+
+
+def test_proxy_argv_replays_offline_to_report_file():
+    # Live replay is network-free (-n: no proxy server) and writes HAR to the
+    # mounted report path via the built-in hardump addon, not stdout.
+    tool = proxy.make_docker()
+    report = f"{tool.REPORT_DIR}/{tool.REPORT_FILE}"
+    argv = tool.argv("x", report_path=report)
+    assert argv[0] == "mitmdump"
+    assert "-n" in argv          # no server started -> no network
+    assert argv[argv.index("-r") + 1] == tool.INPUT_FLOW
+    assert f"hardump={report}" in argv
+
+
+def test_proxy_mounts_flow_read_only(tmp_path):
+    # The recorded flow dump (the target) is mounted read-only at INPUT_FLOW.
+    flow = tmp_path / "flows"
+    flow.write_bytes(b"\x00recorded")
+    tool = proxy.make_docker()
+    assert tool.mounts(str(flow)) == [(str(flow), tool.INPUT_FLOW)]
+    # a non-path target (bare URL) mounts nothing
+    assert tool.mounts("https://shop.example.com") == []
+
+
+def test_proxy_ok_reads_har_from_report_mount(monkeypatch):
+    # The HAR is read back from the writable report mount, not stdout.
     import aegis.tools.base as base
+    from pathlib import Path as _P
     monkeypatch.setattr(base, "docker_available", lambda: True)
     monkeypatch.setattr(base, "image_present", lambda image: True)
     har = proxy._FIXTURE.read_text()
-    monkeypatch.setattr(base, "run_container",
-                        lambda *a, **k: ContainerRun(0, har, ""))
+    spec = proxy.make_docker().report_mount()
+
+    def fake_run(*a, **k):
+        for host, _c in (k.get("rw_mounts") or []):
+            (_P(host) / spec[1]).write_text(har, encoding="utf-8")
+        return ContainerRun(0, "", "")  # nothing on stdout
+
+    monkeypatch.setattr(base, "run_container", fake_run)
     result = proxy.make_docker().run("https://shop.example.com")
     assert result.status == ToolStatus.OK
     assert len(result.candidates) == 3
@@ -142,13 +179,59 @@ def test_browser_unavailable_without_daemon(monkeypatch):
     assert tool.run("https://shop.example.com").status == ToolStatus.UNAVAILABLE
 
 
-def test_browser_ok_when_image_present(monkeypatch):
+def test_browser_declares_report_mount():
+    # The navigation log is produced as a file in a mounted dir; the tool must
+    # ask for a writable report mount so run() reads it back (not stdout).
+    cdir, fname = browser.make_docker().report_mount()
+    assert cdir == "/aegis/out" and fname.endswith(".json")
+
+
+def test_browser_argv_runs_driver_under_node_to_report_file(tmp_path):
+    # The image's Chromium entrypoint is overridden to node so our driver runs;
+    # it writes the navlog JSON to the mounted report file and keeps --no-sandbox.
+    tool = browser.make_docker()
+    assert tool.entrypoint == "node"   # Chromium entrypoint bypassed
+    report = f"{tool.REPORT_DIR}/{tool.REPORT_FILE}"
+    argv = tool.argv(str(tmp_path), report_path=report)
+    assert argv[0] == tool.DRIVER_PATH
+    assert argv[argv.index("--out") + 1] == report
+    assert "--no-sandbox" in argv and "--disable-gpu" in argv
+    # a local target is loaded as a file:// URL off the read-only site mount
+    assert argv[argv.index("--target") + 1] == f"file://{tool.INPUT_DIR}/index.html"
+    # an explicit reachable URL is honoured verbatim
+    argv2 = tool.argv(str(tmp_path), url="https://live.example.com", report_path=report)
+    assert argv2[argv2.index("--target") + 1] == "https://live.example.com"
+
+
+def test_browser_mounts_driver_and_target_read_only(tmp_path):
+    # The driver is always mounted read-only; a local target is mounted too.
+    tool = browser.make_docker()
+    assert tool.DRIVER_SRC.exists()  # driver ships in-repo
+    site = tmp_path / "site"
+    site.mkdir()
+    mounts = tool.mounts(str(site))
+    assert (str(tool.DRIVER_SRC), tool.DRIVER_PATH) in mounts
+    assert (str(site), tool.INPUT_DIR) in mounts
+    # a bare URL target mounts only the driver (no network grant is taken)
+    assert tool.mounts("https://shop.example.com") == [
+        (str(tool.DRIVER_SRC), tool.DRIVER_PATH)]
+
+
+def test_browser_ok_reads_navlog_from_report_mount(monkeypatch):
+    # The navlog is read back from the writable report mount, not stdout.
     import aegis.tools.base as base
+    from pathlib import Path as _P
     monkeypatch.setattr(base, "docker_available", lambda: True)
     monkeypatch.setattr(base, "image_present", lambda image: True)
     navlog = browser._FIXTURE.read_text()
-    monkeypatch.setattr(base, "run_container",
-                        lambda *a, **k: ContainerRun(0, navlog, ""))
+    spec = browser.make_docker().report_mount()
+
+    def fake_run(*a, **k):
+        for host, _c in (k.get("rw_mounts") or []):
+            (_P(host) / spec[1]).write_text(navlog, encoding="utf-8")
+        return ContainerRun(0, "", "")  # nothing on stdout
+
+    monkeypatch.setattr(base, "run_container", fake_run)
     result = browser.make_docker().run("https://shop.example.com")
     assert result.status == ToolStatus.OK
     assert len(result.candidates) == 3
