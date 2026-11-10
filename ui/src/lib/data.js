@@ -56,19 +56,34 @@ export function useAegisData() {
  * while a run is writing it (no server beyond the dev server). Returns the full
  * event list; empty until a run streams one.
  */
-export function useLiveEvents(intervalMs = 1200) {
+export function useLiveEvents(intervalMs = 1500) {
   const [events, setEvents] = useState([]);
   useEffect(() => {
     let alive = true;
     let timer;
+    let lastLen = -1;
+    let stable = 0;
     const tick = async () => {
+      let evs = null;
       try {
-        const evs = parseJsonl(await fetchText("data/events.jsonl"));
-        if (alive) setEvents((prev) => (evs.length !== prev.length ? evs : prev));
+        evs = parseJsonl(await fetchText("data/events.jsonl"));
       } catch {
         /* no events file yet — fine */
       }
-      if (alive) timer = setTimeout(tick, intervalMs);
+      if (!alive) return;
+      if (evs) {
+        if (evs.length !== lastLen) {
+          lastLen = evs.length;
+          stable = 0;
+          setEvents(evs);
+        } else {
+          stable += 1;
+        }
+      }
+      // Stop polling once the run is finished and the stream has settled, so a
+      // completed run doesn't poll forever (this caused the live-view jank).
+      const done = evs && evs.some((e) => e.type === "finish") && stable >= 3;
+      if (alive && !done) timer = setTimeout(tick, intervalMs);
     };
     tick();
     return () => {

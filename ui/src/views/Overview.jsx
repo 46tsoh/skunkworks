@@ -32,6 +32,20 @@ export default function Overview({ model, onOpenFinding, goto }) {
                   hint={`${metrics.decision_cache_hits ?? 0} cache hits`} />
       </div>
 
+      {metrics.llm_usage && (
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1 rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2.5 text-[12px]">
+          <span className="font-semibold uppercase tracking-wide text-[var(--color-faint)]">LLM usage</span>
+          <span className="font-mono text-[var(--color-accent)]">{metrics.llm_usage.model}</span>
+          <span className="text-[var(--color-muted)]">
+            <span className="font-semibold text-[var(--color-ink)] tabular-nums">{metrics.llm_usage.total_tokens.toLocaleString()}</span> tokens
+          </span>
+          <span className="text-[var(--color-faint)] tabular-nums">
+            {metrics.llm_usage.input_tokens.toLocaleString()} in · {metrics.llm_usage.output_tokens.toLocaleString()} out
+          </span>
+          <span className="text-[var(--color-faint)] tabular-nums">{metrics.llm_usage.calls} calls</span>
+        </div>
+      )}
+
       {metrics.degraded && (
         <div className="rounded-[var(--radius-card)] border px-4 py-3 text-[13px]"
              style={{ borderColor: "color-mix(in oklab, var(--color-sev-high) 45%, transparent)",
