@@ -1,0 +1,280 @@
+{
+  "accepted": [
+    {
+      "id": "D1",
+      "title": "SQL injection in login handler",
+      "cwe": "CWE-89",
+      "owasp": "A03:2021-Injection",
+      "component": "POST /login (username)",
+      "cvss_vector": "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+      "cvss_score": 9.8,
+      "severity": "Critical",
+      "posterior": 0.9,
+      "exploitable": true,
+      "stages_passed": 8,
+      "failed_stage": null,
+      "source_engine": "dynamic",
+      "evidence": [
+        "error-based oracle on ' payload",
+        "boolean-based blind confirmed",
+        "unauthenticated /login endpoint"
+      ]
+    },
+    {
+      "id": "D3",
+      "title": "SSRF in webhook URL fetch",
+      "cwe": "CWE-918",
+      "owasp": "A10:2021-Server-Side Request Forgery",
+      "component": "POST /webhooks (callback_url)",
+      "cvss_vector": "AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:L/A:N",
+      "cvss_score": 7.1,
+      "severity": "High",
+      "posterior": 0.85,
+      "exploitable": true,
+      "stages_passed": 8,
+      "failed_stage": null,
+      "source_engine": "dynamic",
+      "evidence": [
+        "fetch of http://127.0.0.1 returns internal page",
+        "no host allowlist",
+        "authenticated low-priv user"
+      ]
+    },
+    {
+      "id": "D2",
+      "title": "Reflected XSS in search results",
+      "cwe": "CWE-79",
+      "owasp": "A03:2021-Injection",
+      "component": "GET /search (q)",
+      "cvss_vector": "AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N",
+      "cvss_score": 6.1,
+      "severity": "Medium",
+      "posterior": 0.82,
+      "exploitable": true,
+      "stages_passed": 8,
+      "failed_stage": null,
+      "source_engine": "dynamic",
+      "evidence": [
+        "payload <svg onload> reflected unescaped",
+        "no CSP header observed",
+        "executes in headless browser"
+      ]
+    },
+    {
+      "id": "S4",
+      "title": "Weak hashing of stored passwords (unsalted SHA-1)",
+      "cwe": "CWE-327",
+      "owasp": "A02:2021-Cryptographic Failures",
+      "component": "api/auth/hashing.py:19",
+      "cvss_vector": "AV:N/AC:H/PR:H/UI:N/S:U/C:H/I:N/A:N",
+      "cvss_score": 4.4,
+      "severity": "Medium",
+      "posterior": 0.8,
+      "exploitable": true,
+      "stages_passed": 8,
+      "failed_stage": null,
+      "source_engine": "static",
+      "evidence": [
+        "hashlib.sha1(password) with no salt",
+        "no KDF / work factor"
+      ]
+    },
+    {
+      "id": "S3",
+      "title": "Buffer over-read in log line parser",
+      "cwe": "CWE-125",
+      "owasp": null,
+      "component": "native/logparse.c:88",
+      "cvss_vector": "AV:L/AC:H/PR:L/UI:N/S:U/C:L/I:N/A:L",
+      "cvss_score": 3.6,
+      "severity": "Low",
+      "posterior": 0.7,
+      "exploitable": false,
+      "stages_passed": 2,
+      "failed_stage": "the path constraints to reach it are satisfiable",
+      "source_engine": "static",
+      "evidence": [
+        "memcpy length from attacker-influenced header",
+        "no bounds check",
+        "local log files only"
+      ]
+    }
+  ],
+  "rejected": [
+    {
+      "id": "D4",
+      "title": "Verbose stack trace on error page",
+      "stage": "triage",
+      "reason": "likely false positive"
+    },
+    {
+      "id": "S2",
+      "title": "Possible hardcoded secret in config loader",
+      "stage": "triage",
+      "reason": "likely false positive"
+    },
+    {
+      "id": "S1",
+      "title": "Unsanitized SQL in authentication query",
+      "stage": "dedupe.cross_engine",
+      "reason": "duplicate of D1 (SQL injection in login handler)"
+    }
+  ],
+  "metrics": {
+    "candidates": 8,
+    "accepted": 5,
+    "rejected": 3,
+    "cross_engine_dedup": 1,
+    "engines": {
+      "dynamic": {
+        "accepted": 3,
+        "rejected": 1
+      },
+      "static": {
+        "accepted": 3,
+        "rejected": 1
+      }
+    },
+    "decisions": 87,
+    "decision_cache_hits": 3,
+    "decisions_by_backend": {
+      "hint": 87
+    },
+    "degraded": false,
+    "tool_failures": []
+  },
+  "summary": {
+    "severity_counts": {
+      "None": 0,
+      "Low": 1,
+      "Medium": 2,
+      "High": 1,
+      "Critical": 1
+    },
+    "engine_counts": {
+      "dynamic": 3,
+      "static": 2
+    }
+  },
+  "run": {
+    "run_id": "demo",
+    "target": "/Users/bobcat/Documents/git/skunkworks/data/sample_target",
+    "backend": "static",
+    "engines": [
+      {
+        "name": "dynamic",
+        "kind": "dynamic",
+        "available": true,
+        "ran": true,
+        "skipped_reason": null,
+        "candidates": 4,
+        "accepted": 3,
+        "rejected": 1,
+        "stage_counts": {
+          "triage": 1,
+          "hypothesis": 0,
+          "dedupe": 0,
+          "validated_exploitable": 3,
+          "validated_informational": 0
+        },
+        "duration_ms": 3.2,
+        "error": null,
+        "extra": {
+          "graph": [
+            {
+              "id": "a0001",
+              "role": "coordinator",
+              "task": "drive the test",
+              "parent_id": null,
+              "status": "completed",
+              "steps_spent": 0
+            },
+            {
+              "id": "a0002",
+              "role": "recon",
+              "task": "map surfaces",
+              "parent_id": "a0001",
+              "status": "completed",
+              "steps_spent": 4
+            },
+            {
+              "id": "a0003",
+              "role": "exploitation",
+              "task": "confirm leads",
+              "parent_id": "a0001",
+              "status": "completed",
+              "steps_spent": 4
+            }
+          ],
+          "steps_spent": 9,
+          "tool_runs": [],
+          "degraded": false
+        }
+      },
+      {
+        "name": "static",
+        "kind": "static",
+        "available": true,
+        "ran": true,
+        "skipped_reason": null,
+        "candidates": 4,
+        "accepted": 3,
+        "rejected": 1,
+        "stage_counts": {
+          "triage": 1,
+          "hypothesis": 0,
+          "dedupe": 0,
+          "validated_exploitable": 2,
+          "validated_informational": 1,
+          "priority": 0
+        },
+        "duration_ms": 2.12,
+        "error": null,
+        "extra": {
+          "hypotheses": [
+            {
+              "id": "S1",
+              "seq": 0,
+              "priority": 8.5,
+              "status": "accepted"
+            },
+            {
+              "id": "S2",
+              "seq": 1,
+              "priority": 3.0,
+              "status": "rejected"
+            },
+            {
+              "id": "S3",
+              "seq": 2,
+              "priority": 7.0,
+              "status": "accepted"
+            },
+            {
+              "id": "S4",
+              "seq": 3,
+              "priority": 8.0,
+              "status": "accepted"
+            }
+          ],
+          "coverage": {
+            "examined": 4,
+            "components": [
+              "api/auth/hashing.py:19",
+              "api/auth/login.py:42",
+              "config/loader.py:10",
+              "native/logparse.c:88"
+            ]
+          },
+          "tool_runs": [],
+          "degraded": false
+        }
+      }
+    ],
+    "cross_engine_dedup": 1,
+    "started_at": 1794272994.067894,
+    "finished_at": 1794272994.074156,
+    "duration_ms": 6.26,
+    "decision_log_path": "ui/public/data/decisions.jsonl"
+  }
+}

@@ -23,9 +23,27 @@ action named. Nothing here is faked to look finished.
 | 2 | Orchestration core: one orchestrator, two pluggable engines (dynamic graph-of-agents + static hypothesis loop), shared KB + router | **done** | — (specs in `docs/specs/`, `aegis.engines`, `aegis run`) |
 | 3 | Tool/scanner adapters behind a common `Tool` interface (dynamic + static capabilities) | **done** | — (17 adapters, dockerized + fixtures, wired into engines) |
 | 4 | Analysis parity through the decision layer (exploitability chain + hypothesis posterior + triage/dedup/CVSS), calibrated on a labeled corpus | **done** | — (labeled corpus + `aegis calibrate`) |
-| 5 | Unified UI (Vite + React + Tailwind) over both engines | **not started** | scaffold after M2 exposes a run/report API |
+| 5 | Unified UI (Vite + React + Tailwind) over both engines | **done** (functional; design polish pass pending) | — (`ui/`; optional `/impeccable` + landing-page polish is a follow-up) |
 | 6 | End-to-end interop: one command runs both engines over the sample target → one unified deduped report + dashboard | **not started** | depends on M2, M5 |
 | 7 | Docs, tests, CI (README, architecture doc, >80% core coverage, CI) | **partial** | arch map + README done; add GitHub Actions CI (user-approved) running pytest + UI build on every PR |
+
+## Milestone 5 — done (functional; design polish pending)
+
+- `ui/` — a local **Vite + React + Tailwind** dashboard over the unified
+  `report.json` + `decisions.jsonl` (written by `aegis run --out ui/public/data`).
+  Local-only: nothing hosted, no telemetry.
+- One design system (tokens, dark theme, a severity colour scale, quiet
+  micro-interactions). Views: **Overview** (KPIs, SVG severity donut, OWASP
+  distribution, per-engine rollup, top findings, rejections, degraded banner);
+  **Findings** (filter/sort by severity/CVSS/OWASP/engine/exploitable, a detail
+  drawer with the parsed CVSS vector, the 8-stage exploitability chain, evidence
+  and the per-finding decision trail); **Agent graph**; **Hypotheses** queue +
+  coverage; the full **decision audit trail**; and the **Tools** catalog.
+- `npm run build` is green; a `dashboard build` job added to CI.
+- Pending follow-up: the full `design-taste-frontend`/`/impeccable` finish gate
+  (a marketing-style landing/overview page + a browser-run polish pass). The
+  dashboard app itself is a data-dense tool, deliberately outside that
+  company-website gate; its quality bar is applied by hand.
 
 ## Milestone 4 — done
 
