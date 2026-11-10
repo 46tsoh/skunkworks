@@ -12,9 +12,17 @@ from aegis.engines.dynamic import DynamicEngine
 from aegis.engines.static import StaticEngine
 
 
-def default_orchestrator() -> Orchestrator:
-    """An orchestrator with both standard engines registered (dynamic, static)."""
-    return Orchestrator([DynamicEngine(), StaticEngine()])
+def default_orchestrator(registry=None) -> Orchestrator:
+    """An orchestrator with both standard engines registered (dynamic, static).
+
+    With a ``registry`` (a ``ToolRegistry``), both engines source their
+    candidates from the available tools of their kind; otherwise they read the
+    bundled sample-target candidate files.
+    """
+    return Orchestrator([
+        DynamicEngine(registry=registry),
+        StaticEngine(registry=registry),
+    ])
 
 
 __all__ = [

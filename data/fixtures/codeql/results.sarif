@@ -1,0 +1,92 @@
+{
+  "version": "2.1.0",
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "CodeQL",
+          "semanticVersion": "2.19.3",
+          "rules": [
+            {
+              "id": "py/sql-injection",
+              "name": "py/sql-injection",
+              "shortDescription": {"text": "SQL query built from user-controlled sources"},
+              "fullDescription": {"text": "Building a SQL query from user-controlled sources allows injection attacks."},
+              "defaultConfiguration": {"level": "error"},
+              "properties": {
+                "tags": ["security", "external/cwe/cwe-089"],
+                "problem.severity": "error",
+                "security-severity": "8.8"
+              }
+            },
+            {
+              "id": "py/path-injection",
+              "name": "py/path-injection",
+              "shortDescription": {"text": "Uncontrolled data used in path expression"},
+              "fullDescription": {"text": "Accessing a path built from user-controlled sources allows traversal."},
+              "defaultConfiguration": {"level": "warning"},
+              "properties": {
+                "tags": ["security", "external/cwe/cwe-022"],
+                "problem.severity": "warning",
+                "security-severity": "7.5"
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "py/sql-injection",
+          "ruleIndex": 0,
+          "level": "error",
+          "message": {"text": "This SQL query depends on a user-provided value."},
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {"uri": "app/dao/users.py"},
+                "region": {"startLine": 57, "startColumn": 16, "endColumn": 64}
+              }
+            }
+          ],
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "location": {
+                        "physicalLocation": {"artifactLocation": {"uri": "app/api/handler.py"}, "region": {"startLine": 12}},
+                        "message": {"text": "user-controlled source: request.args['q']"}
+                      }
+                    },
+                    {
+                      "location": {
+                        "physicalLocation": {"artifactLocation": {"uri": "app/dao/users.py"}, "region": {"startLine": 57}},
+                        "message": {"text": "SQL sink: cursor.execute(...)"}
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "ruleId": "py/path-injection",
+          "ruleIndex": 1,
+          "level": "warning",
+          "message": {"text": "This path depends on a user-provided value."},
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {"uri": "app/files/download.py"},
+                "region": {"startLine": 33, "startColumn": 9}
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

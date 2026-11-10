@@ -1,0 +1,69 @@
+{
+  "tool": "frida",
+  "frida_version": "16.5.9",
+  "target": {"spawn": "/work/bin/vulnserver", "pid": 48213, "argv": ["./vulnserver", "--port", "9000"]},
+  "duration_s": 12.4,
+  "script": "aegis-sink-hooks.js",
+  "hooks": [
+    {
+      "id": 1,
+      "function": "system",
+      "module": "libc.so.6",
+      "category": "command-exec",
+      "severity": "critical",
+      "tainted": true,
+      "taint_source": "http.query.host",
+      "args": ["ping -c 1 8.8.8.8; id"],
+      "thread": "0x1f3a",
+      "backtrace": ["handle_ping+0x1a4", "dispatch_request+0x66", "main+0x120"]
+    },
+    {
+      "id": 2,
+      "function": "sqlite3_exec",
+      "module": "libsqlite3.so.0",
+      "category": "sql-exec",
+      "severity": "high",
+      "tainted": true,
+      "taint_source": "http.body.username",
+      "args": ["SELECT * FROM users WHERE name = '' OR 1=1 -- '"],
+      "thread": "0x1f3a",
+      "backtrace": ["do_login+0x210", "dispatch_request+0x66"]
+    },
+    {
+      "id": 3,
+      "function": "fopen",
+      "module": "libc.so.6",
+      "category": "file-open",
+      "severity": "medium",
+      "tainted": true,
+      "taint_source": "http.query.path",
+      "args": ["../../../../etc/passwd", "r"],
+      "thread": "0x2004",
+      "backtrace": ["serve_static+0x88", "dispatch_request+0x66"]
+    },
+    {
+      "id": 4,
+      "function": "strcpy",
+      "module": "libc.so.6",
+      "category": "mem-write",
+      "severity": "high",
+      "tainted": true,
+      "cwe": "CWE-120",
+      "taint_source": "http.header.X-Forwarded-For",
+      "args": ["<stack buffer 64B>", "<488B attacker-controlled input>"],
+      "thread": "0x2004",
+      "backtrace": ["parse_header+0x2c", "read_request+0x14"]
+    },
+    {
+      "id": 5,
+      "function": "getenv",
+      "module": "libc.so.6",
+      "category": "env-read",
+      "severity": "info",
+      "tainted": false,
+      "args": ["PATH"],
+      "thread": "0x1f3a",
+      "backtrace": ["server_init+0x10", "main+0x40"]
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "target": "bin/vault-authd",
+  "format": "elf64",
+  "arch": "x86_64",
+  "stripped": true,
+  "hardening": {
+    "relro": "partial",
+    "canary": false,
+    "nx": true,
+    "pie": false,
+    "fortify": false,
+    "rpath": true
+  },
+  "unsafe_imports": [
+    {"symbol": "strcpy", "callsites": 4},
+    {"symbol": "gets", "callsites": 1},
+    {"symbol": "system", "callsites": 2},
+    {"symbol": "sprintf", "callsites": 3}
+  ]
+}

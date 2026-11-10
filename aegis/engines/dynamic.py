@@ -20,7 +20,7 @@ from aegis.analysis.pipeline import promote_candidate
 from aegis.analysis.triage import is_true_positive
 from aegis.config import DEFAULT_POSTERIOR_MIN, AegisConfig
 from aegis.decision import DecisionRouter
-from aegis.engines.base import EngineReport
+from aegis.engines.base import EngineReport, _candidates_from_tools
 from aegis.knowledge.base import KnowledgeBase
 from aegis.knowledge.loader import load_candidates
 from aegis.knowledge.models import Candidate, Finding
@@ -86,9 +86,12 @@ class DynamicEngine:
     kind = "dynamic"
 
     def __init__(self, probe: Optional[SampleProbe] = None,
-                 max_steps: int = 64) -> None:
+                 max_steps: int = 64, registry=None,
+                 tool_names: Optional[Sequence[str]] = None) -> None:
         self._probe = probe
         self._max_steps = max_steps
+        self._registry = registry
+        self._tool_names = tool_names
         self.graph: List[AgentNode] = []
 
     def available(self) -> bool:
@@ -96,6 +99,9 @@ class DynamicEngine:
 
     def enumerate_candidates(self, target: str,
                              config: AegisConfig) -> Sequence[Candidate]:
+        if self._registry is not None:
+            return _candidates_from_tools(self._registry, self.kind, target,
+                                          self._tool_names)
         path = Path(target or _DEFAULT_TARGET)
         if path.is_dir():
             path = path / "candidates_dynamic.json"

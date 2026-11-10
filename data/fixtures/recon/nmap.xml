@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Recorded `nmap -sV -oX` run against the bundled local sample target. -->
+<nmaprun scanner="nmap" args="nmap -sV -oX - 127.0.0.1" start="1731200000" version="7.94">
+  <host starttime="1731200000" endtime="1731200012">
+    <status state="up" reason="localhost-response"/>
+    <address addr="127.0.0.1" addrtype="ipv4"/>
+    <hostnames>
+      <hostname name="localhost" type="user"/>
+    </hostnames>
+    <ports>
+      <port protocol="tcp" portid="22">
+        <state state="open" reason="syn-ack" reason_ttl="0"/>
+        <service name="ssh" product="OpenSSH" version="8.9p1 Ubuntu 3ubuntu0.4" ostype="Linux" method="probed" conf="10"/>
+      </port>
+      <port protocol="tcp" portid="80">
+        <state state="open" reason="syn-ack" reason_ttl="0"/>
+        <service name="http" product="nginx" version="1.18.0" method="probed" conf="10"/>
+      </port>
+      <port protocol="tcp" portid="3306">
+        <state state="open" reason="syn-ack" reason_ttl="0"/>
+        <service name="mysql" product="MySQL" version="8.0.34" method="probed" conf="10"/>
+      </port>
+      <port protocol="tcp" portid="443">
+        <state state="closed" reason="conn-refused" reason_ttl="0"/>
+        <service name="https" method="table" conf="3"/>
+      </port>
+    </ports>
+  </host>
+  <runstats>
+    <finished time="1731200012" elapsed="12.0" exit="success"/>
+    <hosts up="1" down="0" total="1"/>
+  </runstats>
+</nmaprun>

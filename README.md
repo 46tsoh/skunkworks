@@ -23,9 +23,23 @@ python -m venv .venv
 .venv/bin/aegis analyze                 # single pipeline on the sample corpus
 .venv/bin/aegis run                     # BOTH engines over the sample target (unified report)
 .venv/bin/aegis run --backend llm       # drive decisions with a standard local LLM
+.venv/bin/aegis run --use-tools         # source candidates from the tool registry
+.venv/bin/aegis tools                   # tool adapter inventory + availability
 .venv/bin/aegis run --out ./run         # also write report.json + decisions.jsonl
-.venv/bin/pytest --cov=aegis            # 95 passing, ~95% coverage
+.venv/bin/pytest --cov=aegis            # 226 passing, ~96% coverage
 ```
+
+## Tools
+
+17 capability adapters sit behind one `Tool` interface (`aegis.tools`) — static
+(`semgrep`, `codeql`, `sca`, `binary`, `fuzz`, `crash`, `forensics`) and dynamic
+(`recon`, `web`, `dast`, `proxy`, `browser`, `shell`, `sandbox`, `poc`, `frida`,
+`rr`). Binary-backed tools run in **local Docker containers** with `--network
+none`, `--pull=never`, read-only mounts and resource caps — nothing installed on
+the host, nothing hosted. Every adapter is **fixture-first**: it ships a recorded
+output + the production parser, so the whole pipeline runs and the suite passes
+with no images pulled. Pull images to run tools live: `./docker/pull-images.sh`
+(see [`docker/README.md`](docker/README.md)).
 
 ## Models
 

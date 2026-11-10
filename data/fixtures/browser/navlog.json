@@ -1,0 +1,43 @@
+{
+  "target": "https://shop.example.com",
+  "engine": "chromium-headless",
+  "pages": [
+    {
+      "url": "https://shop.example.com/",
+      "screenshot": "artifacts/browser/home.png",
+      "html": "artifacts/browser/home.html",
+      "console": [
+        {"level": "warning", "text": "Mixed Content: requested an insecure script."}
+      ],
+      "dom_sinks": [
+        {
+          "sink": "Element.innerHTML",
+          "source": "location.hash",
+          "snippet": "container.innerHTML = decodeURIComponent(location.hash.slice(1))",
+          "file": "assets/app.js",
+          "line": 120
+        }
+      ],
+      "mixed_content": [
+        {"resource": "http://cdn.example.com/legacy/analytics.js", "type": "script"}
+      ],
+      "secrets": [
+        {
+          "kind": "aws_access_key_id",
+          "match": "AKIAIOSFODNN7EXAMPLE",
+          "file": "assets/config.js",
+          "line": 8
+        }
+      ]
+    },
+    {
+      "url": "https://shop.example.com/cart",
+      "screenshot": "artifacts/browser/cart.png",
+      "html": "artifacts/browser/cart.html",
+      "console": [],
+      "dom_sinks": [],
+      "mixed_content": [],
+      "secrets": []
+    }
+  ]
+}
