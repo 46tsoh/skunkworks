@@ -34,4 +34,18 @@ if docker image inspect aquasec/trivy:0.58.1 >/dev/null 2>&1; then
     && echo "   vuln DB ready" || echo "   (Trivy DB provisioning failed)"
 fi
 
+# Semgrep's --config auto fetches rules from semgrep.dev, unreachable under
+# --network none. Provision the OSS semgrep-rules ruleset once (this needs
+# network) into a named volume the `semgrep` adapter mounts read-only; the scan
+# then runs offline. Only needed for live `semgrep` scans; safe to skip.
+if docker image inspect semgrep/semgrep:1.95.0 >/dev/null 2>&1; then
+  echo "==> provisioning semgrep-rules into volume aegis-semgrep-rules"
+  docker run --rm -v aegis-semgrep-rules:/rules --entrypoint sh \
+    semgrep/semgrep:1.95.0 -c \
+    'rm -rf /rules/* /rules/.git 2>/dev/null; \
+     git clone --depth 1 https://github.com/semgrep/semgrep-rules /rules' \
+    >/dev/null 2>&1 \
+    && echo "   rules ready" || echo "   (semgrep-rules provisioning failed)"
+fi
+
 echo "Done. Check availability with:  aegis tools"
