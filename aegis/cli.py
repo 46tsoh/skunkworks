@@ -282,9 +282,11 @@ def _cmd_exploit(args: argparse.Namespace) -> int:
         return 2
 
     events = []
-    engine = RedTeamEngine(scope, on_event=events.append)
+    engine = RedTeamEngine(scope, on_event=events.append,
+                           flag_paths=args.flag_path or None)
+    pe_state = "on" if scope.allow_post_exploit else "off"
     print(f"[exploit] {args.type} on {args.target}  (param {args.param!r}, "
-          f"engagement {scope.engagement or 'unnamed'!r})")
+          f"engagement {scope.engagement or 'unnamed'!r}, post-exploit {pe_state})")
     result = engine.attempt(args.type, args.target, args.param)
 
     if not result.in_scope:
@@ -300,6 +302,23 @@ def _cmd_exploit(args: argparse.Namespace) -> int:
         print(f"  proof: {sanitize_text(result.proof)}")
     for e in result.evidence:
         print(f"    - {sanitize_text(e)}")
+    pe = result.post_exploit
+    if pe and pe.get("ran"):
+        print("  -- post-exploit (read-only proof) --")
+        for c in pe.get("commands", []):
+            mark = "ok" if c.get("ok") else "--"
+            print(f"    [{mark}] {sanitize_text(c.get('command',''))}"
+                  f" → {sanitize_text((c.get('output','') or '')[:120])}")
+        if pe.get("flag"):
+            print(f"  FLAG [{sanitize_text(pe.get('flag_path',''))}]: "
+                  f"{sanitize_text(pe.get('flag',''))}")
+        else:
+            for fr in pe.get("files_read", []):
+                print(f"    read {sanitize_text(fr.get('path',''))}: "
+                      f"{sanitize_text((fr.get('content','') or '')[:120])} "
+                      f"(no flag pattern)")
+    if result.note:
+        print(f"  note: {sanitize_text(result.note)}")
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(json.dumps(
@@ -473,8 +492,13 @@ def build_parser() -> argparse.ArgumentParser:
     exp.add_argument("--param", required=True,
                      help="request parameter to probe")
     exp.add_argument("--type", required=True,
-                     choices=["xss", "sqli", "redirect"],
+                     choices=["xss", "sqli", "redirect", "cmdi"],
                      help="weakness class to confirm")
+    exp.add_argument("--flag-path", action="append", default=[],
+                     help="file path to read for a flag in stage-2 post-exploit "
+                          "(repeatable; only used when the scope's "
+                          "allow_post_exploit is set and a cmdi foothold is "
+                          "confirmed). Paths must be plain (no shell syntax).")
     exp.add_argument("--scope", required=True, type=Path,
                      help="engagement scope file (JSON/YAML); every action is "
                           "checked against it and refused if out of scope")

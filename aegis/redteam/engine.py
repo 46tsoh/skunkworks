@@ -37,13 +37,15 @@ class ExploitResult:
     evidence: List[str] = field(default_factory=list)
     requests: int = 0
     note: str = ""
+    post_exploit: Optional[dict] = None   # stage-2 result, when it ran
 
     def as_dict(self) -> dict:
         return {"target": self.target, "param": self.param, "kind": self.kind,
                 "in_scope": self.in_scope, "attempted": self.attempted,
                 "verified": self.verified, "technique": self.technique,
                 "cwe": self.cwe, "proof": self.proof, "evidence": self.evidence,
-                "requests": self.requests, "note": self.note}
+                "requests": self.requests, "note": self.note,
+                "post_exploit": self.post_exploit}
 
 
 class RedTeamEngine:
@@ -51,9 +53,11 @@ class RedTeamEngine:
 
     def __init__(self, scope: EngagementScope,
                  transport: Optional[Transport] = None,
-                 on_event: Optional[Callable[[dict], None]] = None) -> None:
+                 on_event: Optional[Callable[[dict], None]] = None,
+                 flag_paths: Optional[List[str]] = None) -> None:
         self._scope = scope
         self._on_event = on_event
+        self._flag_paths = flag_paths
         # The network is reachable only through a scope-gated transport.
         inner = transport if transport is not None else UrllibTransport()
         self._transport = ScopeGatedTransport(
@@ -87,8 +91,39 @@ class RedTeamEngine:
             verified=vr.verified, technique=vr.technique, cwe=vr.cwe,
             proof=vr.proof, evidence=list(vr.evidence), requests=vr.requests,
             note="" if vr.verified else "not confirmed")
+
+        # Stage 2 — post-exploitation. Runs ONLY when the foothold is verified
+        # AND the engagement scope opted in (allow_post_exploit, default off).
+        # Currently: read-only flag retrieval through a command-injection
+        # foothold with a sequence-capable payload.
+        if result.verified and self._scope.allow_post_exploit:
+            self._maybe_post_exploit(result, vr)
+        elif result.verified and vr.context.get("seq"):
+            result.note = ("foothold confirmed; post-exploit not run "
+                           "(scope allow_post_exploit is off)")
+
         self._emit("exploit_result", result.as_dict())
-        return result  # stop at proof — no post-exploitation in stage 1
+        return result  # stage 1/2 stop here — no lateral movement (stage 3)
+
+    def _maybe_post_exploit(self, result: ExploitResult,
+                            vr: VerifyResult) -> None:
+        # Only a sequence-capable command-injection foothold drives stage 2.
+        if vr.technique != "cmdi" or not vr.context.get("seq"):
+            return
+        from aegis.redteam.postexploit import retrieve_flag
+        self._emit("post_exploit_start",
+                   {"target": result.target, "param": result.param})
+        pe = retrieve_flag(self._transport, result.target, result.param,
+                           template=vr.context["template"],
+                           flag_paths=self._flag_paths)
+        result.post_exploit = pe.as_dict()
+        result.requests += pe.requests
+        if pe.flag:
+            result.note = (f"post-exploit: flag retrieved from "
+                           f"{pe.flag_path or '?'}")
+        else:
+            result.note = f"post-exploit ran: {pe.note}"
+        self._emit("post_exploit_result", pe.as_dict())
 
 
 __all__ = ["ExploitResult", "RedTeamEngine"]
