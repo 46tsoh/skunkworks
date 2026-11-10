@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -87,6 +88,27 @@ class ToolResult:
 
 # A parser turns a tool's native output text into Candidate objects.
 Parser = Callable[[str, str], List[Candidate]]
+
+
+def _read_report_file(path: Path) -> str:
+    """Read a tool's report file, refusing to follow a symlink.
+
+    The report lives in a scratch dir that the scanning container writes to. We
+    open with ``O_NOFOLLOW`` and require a regular file, so a planted symlink at
+    the report path can never redirect the read to an arbitrary file on the
+    host. Any absence/irregularity yields ``""`` (parsed as "no findings").
+    """
+    try:
+        fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError:
+        return ""  # missing, or a symlink (ELOOP) — refuse either way
+    with os.fdopen(fd, "r", encoding="utf-8") as fh:
+        try:
+            if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+                return ""
+            return fh.read()
+        except OSError:
+            return ""
 
 
 @runtime_checkable
@@ -238,12 +260,19 @@ class DockerBackedTool:
         report_spec = self.report_mount()
         rw_mounts = []
         report_dir = None
+        report_parent = None
         if report_spec is not None:
             container_dir, filename = report_spec
-            report_dir = tempfile.mkdtemp(prefix="aegis-report-")
-            # The scanner may run as a non-root UID inside the container
-            # (ZAP is uid 1000); make the empty scratch dir writable by it.
-            os.chmod(report_dir, 0o777)
+            # The scanner may run as a non-root UID inside the container (ZAP is
+            # uid 1000) and must be able to write the report, so the mount dir
+            # is group/other-writable. To avoid a world-writable dir on a shared
+            # host, it lives INSIDE a 0700 parent we own: directory traversal
+            # needs execute on every ancestor, so no other local user can reach
+            # the inner dir even at 0777. The Docker daemon (root) still resolves
+            # the bind mount. We also refuse a symlinked report on read-back.
+            report_parent = tempfile.mkdtemp(prefix="aegis-report-")  # 0700, ours
+            report_dir = os.path.join(report_parent, "wrk")
+            os.mkdir(report_dir, 0o777)
             rw_mounts = [(report_dir, container_dir)]
             opts = {**opts, "report_path": f"{container_dir}/{filename}"}
         try:
@@ -268,9 +297,8 @@ class DockerBackedTool:
                     duration_ms=(time.perf_counter() - t0) * 1000.0)
             # Parse the report file for file-emitting tools; stdout otherwise.
             if report_dir is not None:
-                report_file = Path(report_dir) / report_spec[1]
-                parse_input = (report_file.read_text(encoding="utf-8")
-                               if report_file.exists() else "")
+                parse_input = _read_report_file(
+                    Path(report_dir) / report_spec[1])
             else:
                 parse_input = cr.stdout
             cands = self._parser(parse_input, target)
@@ -285,8 +313,8 @@ class DockerBackedTool:
                               errors=[f"{type(exc).__name__}: {exc}"],
                               duration_ms=(time.perf_counter() - t0) * 1000.0)
         finally:
-            if report_dir is not None:
-                shutil.rmtree(report_dir, ignore_errors=True)
+            if report_parent is not None:
+                shutil.rmtree(report_parent, ignore_errors=True)
 
 
 class ToolRegistry:

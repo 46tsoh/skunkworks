@@ -1,5 +1,6 @@
 """Tests for the Docker/host runtime and registry wiring (no real docker)."""
 
+import os
 import subprocess
 
 import pytest
@@ -105,6 +106,58 @@ def test_report_emitting_tool_reads_file_and_cleans_up(monkeypatch, tmp_path):
     assert seen["report_path"] == "/out/r.json"   # argv got the in-container path
     import os
     assert not os.path.exists(seen["host"])        # scratch dir cleaned up
+
+
+def test_read_report_refuses_symlink(tmp_path):
+    """The report read-back must not follow a symlink (no arbitrary-file read
+    if an attacker plants one at the report path)."""
+    import aegis.tools.base as base
+    secret = tmp_path / "secret"
+    secret.write_text("TOP SECRET")
+    link = tmp_path / "report.json"
+    os.symlink(secret, link)
+    assert base._read_report_file(link) == ""          # symlink refused
+    # a real regular file is read normally
+    real = tmp_path / "real.json"
+    real.write_text('{"ok": 1}')
+    assert base._read_report_file(real) == '{"ok": 1}'
+    assert base._read_report_file(tmp_path / "missing.json") == ""
+
+
+def test_report_scratch_dir_shielded_by_private_parent(monkeypatch):
+    """The writable mount dir lives inside a 0700 parent we own, so no other
+    local user can traverse into it even though it is group/other-writable."""
+    import os as _os
+    import stat as _stat
+    import aegis.tools.base as base
+    from aegis.knowledge.models import Candidate
+
+    monkeypatch.setattr(base, "docker_available", lambda: True)
+    monkeypatch.setattr(base, "image_present", lambda image: True)
+    captured = {}
+
+    class ReportTool(base.DockerBackedTool):
+        name, kind, image = "rep", ToolKind.DYNAMIC, "img:1"
+        allows_network = True
+        def report_mount(self):
+            return ("/out", "r.json")
+        def argv(self, target, **opts):
+            return ["scan"]
+
+    def fake_run(image, args, **k):
+        host, _ = k["rw_mounts"][0]
+        parent = _os.path.dirname(host)
+        captured["parent_mode"] = _stat.S_IMODE(_os.stat(parent).st_mode)
+        (__import__("pathlib").Path(host) / "r.json").write_text('{"x":1}')
+        return rt.ContainerRun(0, "", "")
+
+    monkeypatch.setattr(base, "run_container", fake_run)
+    tool = ReportTool(parser=lambda raw, t: (
+        [Candidate(id="c1", title=raw.strip(), cwe="CWE-20",
+                   component=t, cvss_vector="")] if raw.strip() else []))
+    result = tool.run("http://t", network="bridge")
+    assert result.status == ToolStatus.OK and result.candidates
+    assert captured["parent_mode"] == 0o700     # private parent shields the mount
 
 
 def test_run_container_timeout(monkeypatch):

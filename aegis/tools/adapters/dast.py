@@ -111,8 +111,17 @@ class ZapDockerTool(DockerBackedTool):
         url = opts.get("url", target)
         # Bare filename: ZAP resolves -J relative to its working dir (REPORT_DIR,
         # the writable mount), so the report lands where run() reads it back.
-        script = "zap-full-scan.py" if opts.get("active") else "zap-baseline.py"
-        return [script, "-t", url, "-J", self.REPORT_FILE, "-I"]
+        if opts.get("active"):
+            # Bound the spider and active scanner so a run always completes
+            # inside timeout_s (an unbounded active scan of a large app would
+            # otherwise time out and surface no findings). Overridable via opts.
+            zap_opts = opts.get("zap_options") or (
+                f"-config spider.maxDuration={opts.get('spider_mins', 2)} "
+                f"-config scanner.maxScanDurationInMins="
+                f"{opts.get('scan_mins', 5)}")
+            return ["zap-full-scan.py", "-t", url, "-J", self.REPORT_FILE,
+                    "-I", "-z", zap_opts]
+        return ["zap-baseline.py", "-t", url, "-J", self.REPORT_FILE, "-I"]
 
 
 def make_docker() -> ZapDockerTool:
