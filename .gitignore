@@ -2,3 +2,8 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 decisions.jsonl
+.venv/
+reference/_upstream/
+*.egg-info/
+.coverage
+htmlcov/

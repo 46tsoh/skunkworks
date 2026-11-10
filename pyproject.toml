@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aegis-security"
+version = "0.1.0"
+description = "Aegis — a unified, local-only security-analysis framework (Strix + RAPTOR patterns through a typed decision layer)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "skunkworks" }]
+keywords = ["security", "sast", "dast", "triage", "cvss", "decision-model"]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-cov>=5"]
+
+[project.scripts]
+aegis = "aegis.cli:main"
+
+[tool.setuptools]
+packages = [
+    "aegis",
+    "aegis.decision",
+    "aegis.decision.integrations",
+    "aegis.knowledge",
+    "aegis.analysis",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["aegis/tests", "reference/jev/tests", "poc/tests"]
+addopts = "-q"
+
+[tool.coverage.run]
+source = ["aegis"]
+omit = ["aegis/tests/*"]
