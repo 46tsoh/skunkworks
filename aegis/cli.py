@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from aegis import __version__
@@ -170,7 +171,6 @@ def _cmd_scan(args: argparse.Namespace) -> int:
 
     from aegis.tools import default_registry
     from aegis.tools.base import DockerBackedTool
-    from aegis.knowledge.base import KnowledgeBase
 
     reg = default_registry()
     try:
@@ -208,13 +208,33 @@ def _cmd_scan(args: argparse.Namespace) -> int:
 
     cands = list(result.candidates)
     for c in cands:
-        c.source_engine = tool.kind.value
-    cfg = AegisConfig.from_env(
-        backend=args.backend, local_only=not args.allow_egress)
-    router = build_router(cands, config=cfg)
-    kb = KnowledgeBase()
-    run(router, cands, posterior_min=cfg.posterior_min, kb=kb)
-    kb.rank()
+        c.source_engine = "dynamic"
+
+    # Drive the full dynamic agent loop over the real findings: the agent
+    # reasons about each lead (transcript), the decider gates it, and
+    # exploitable findings spawn a subagent — the same experience as a local
+    # run, now over a real authorized target.
+    from aegis.engines import Orchestrator
+    from aegis.engines.base import RunConfig
+    from aegis.engines.dynamic import DynamicEngine, SampleProbe
+
+    class _ExternalScanEngine(DynamicEngine):
+        def __init__(self, candidates):
+            super().__init__(probe=SampleProbe(candidates))
+            self._cands = candidates
+
+        def enumerate_candidates(self, target, config):
+            return self._cands
+
+    cfg_mode = {"mode": args.mode} if args.mode else {"backend": args.backend}
+    aegis_cfg = AegisConfig.from_env(local_only=not args.allow_egress, **cfg_mode)
+    log_path = (args.out / "decisions.jsonl") if args.out else None
+    aegis_cfg = replace(aegis_cfg, log_path=log_path) if log_path else aegis_cfg
+    orch = Orchestrator([_ExternalScanEngine(cands)])
+    run_cfg = RunConfig(target=args.target, aegis=aegis_cfg, parallel=False,
+                        out_dir=args.out, run_id=args.run_id or "scan")
+    run_result = orch.run(run_cfg)
+    kb = run_result.kb
 
     print(f"\n-- Findings on {args.target} ({len(kb.accepted)}) --")
     for f in kb.accepted:
@@ -224,10 +244,8 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     if not kb.accepted:
         print("  (no findings promoted)")
     if args.out:
-        args.out.mkdir(parents=True, exist_ok=True)
-        (args.out / "scan.json").write_text(
-            json.dumps(kb.as_dict(), indent=2), encoding="utf-8")
-        print(f"\nWrote {args.out / 'scan.json'}")
+        print(f"\nWrote run to {args.out}  (open the dashboard to read the "
+              f"agent transcript)")
     return 0
 
 
@@ -370,11 +388,17 @@ def build_parser() -> argparse.ArgumentParser:
     scan_p.add_argument("--authorized", action="store_true",
                         help="confirm you are permitted to test this target "
                              "(required; external scans are refused otherwise)")
+    scan_p.add_argument("--mode",
+                        choices=["full-llm", "llm+decision", "static"],
+                        default=None, help="operating mode (LLM reasoning over "
+                                           "the real target); overrides --backend")
     scan_p.add_argument("--backend", choices=["static", "basal", "jev", "llm"],
                         default="static", help="decision backend (default: static)")
     scan_p.add_argument("--allow-egress", action="store_true")
+    scan_p.add_argument("--run-id", default=None)
     scan_p.add_argument("--out", type=Path, default=None,
-                        help="directory for scan.json")
+                        help="directory for the run (report.json + events.jsonl "
+                             "+ decisions.jsonl) — view it in the dashboard")
     scan_p.set_defaults(func=_cmd_scan)
 
     cal = sub.add_parser("calibrate",
