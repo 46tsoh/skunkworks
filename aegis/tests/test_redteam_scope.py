@@ -176,3 +176,95 @@ def test_target_with_no_host_is_refused():
 def test_decision_as_dict_is_audit_ready():
     d = _scope(hosts=["target.htb"]).check("target.htb").as_dict()
     assert d["target"] == "target.htb" and d["in_scope"] is True and d["reason"]
+
+
+# -- URL matching hardening (HIGH: parser-differential bypass) ----------------
+def test_url_userinfo_smuggling_is_refused():
+    s = _scope(urls=["http://target.htb/"], hosts=["target.htb"])
+    # the real host is evil.com; the allowlist must not be fooled by userinfo
+    assert not s.is_in_scope("http://target.htb@evil.com/")
+    assert not s.is_in_scope("http://target.htb:x@evil.com/")
+
+
+def test_url_path_is_segmentwise_prefix_not_substring():
+    s = _scope(urls=["http://target.htb/app/"])
+    assert s.is_in_scope("http://target.htb/app/login")
+    assert s.is_in_scope("http://target.htb/app")          # same segment
+    assert not s.is_in_scope("http://target.htb/app-evil") # not a path segment
+    assert not s.is_in_scope("http://target.htb/other")
+
+
+def test_url_dot_segment_escape_is_resolved():
+    s = _scope(urls=["http://target.htb/app/"])
+    # ../admin escapes /app/, and the %2e-encoded form must not sneak past
+    assert not s.is_in_scope("http://target.htb/app/../admin")
+    assert not s.is_in_scope("http://target.htb/app/%2e%2e/admin")
+
+
+def test_url_scheme_and_port_must_match():
+    s = _scope(urls=["http://target.htb/"])
+    assert not s.is_in_scope("https://target.htb/")        # scheme differs
+    assert not s.is_in_scope("http://target.htb:8443/")    # port differs
+    assert s.is_in_scope("http://target.htb:80/")          # default port == 80
+
+
+# -- host canonicalization (MEDIUM: fail-open normalization) ------------------
+def test_trailing_dot_and_case_canonicalized():
+    s = _scope(hosts=["target.htb"])
+    assert s.is_in_scope("TARGET.HTB")
+    assert s.is_in_scope("target.htb.")        # FQDN trailing dot
+    assert s.is_in_scope("http://Target.HTB./")
+
+
+def test_malformed_host_is_refused():
+    s = _scope(hosts=["target.htb"])
+    assert not s.is_in_scope("target.htb/..")
+    assert not s.is_in_scope("target.htb evil")
+
+
+# -- load-time guards (MEDIUM: unenforceable deny / hostless url) --------------
+def _write(tmp_path, obj):
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps(obj))
+    return p
+
+
+def test_load_rejects_ip_deny_with_name_only_allow(tmp_path):
+    # deny is an IP but allows are names ⇒ the deny could be unenforceable
+    p = _write(tmp_path, {"targets": {"hosts": ["target.htb"]},
+                          "deny": {"hosts": ["10.0.0.1"]}})
+    with pytest.raises(ScopeError):
+        load_scope(p)
+
+
+def test_load_rejects_name_deny_with_ip_only_allow(tmp_path):
+    p = _write(tmp_path, {"targets": {"hosts": ["10.0.0.0/24"]},
+                          "deny": {"hosts": ["evil.htb"]}})
+    with pytest.raises(ScopeError):
+        load_scope(p)
+
+
+def test_load_allows_same_form_deny(tmp_path):
+    # mixed allow forms with an IP deny is fine (an IP allow is present)
+    p = _write(tmp_path, {"targets": {"hosts": ["10.0.0.0/24", "target.htb"]},
+                          "deny": {"hosts": ["10.0.0.1"]}})
+    s = load_scope(p)
+    assert s.is_in_scope("10.0.0.9") and not s.is_in_scope("10.0.0.1")
+
+
+def test_load_rejects_url_prefix_without_host(tmp_path):
+    p = _write(tmp_path, {"targets": {"urls": ["/app/"]}})
+    with pytest.raises(ScopeError):
+        load_scope(p)
+
+
+def test_load_rejects_unusable_host_entry(tmp_path):
+    p = _write(tmp_path, {"targets": {"hosts": ["bad host/with slash"]}})
+    with pytest.raises(ScopeError):
+        load_scope(p)
+
+
+def test_example_scope_file_loads():
+    # the shipped example must stay valid
+    s = load_scope("data/examples/engagement.scope.json")
+    assert s.is_in_scope("10.129.0.9") and not s.is_in_scope("10.129.0.1")
