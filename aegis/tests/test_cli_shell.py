@@ -328,6 +328,47 @@ def test_handler_exception_does_not_kill_repl(monkeypatch, capsys):
     assert "error:" in text and "steps=" in text  # survived to run `status`
 
 
+# -- the interactive `agent` verb drives autonomously and reads `go` from stdin
+def test_shell_agent_verb_pauses_then_exploits_on_go(monkeypatch):
+    from aegis.tools.base import DockerBackedTool, ToolResult, ToolStatus
+    from aegis.tools.util import make_candidate
+    from aegis.redteam.http import HttpResponse
+
+    class _Scanner(DockerBackedTool):
+        allows_network = True
+
+        def __init__(self, name):
+            self.name = name
+
+        def run(self, target, **kw):
+            return ToolResult(self.name, ToolStatus.OK, candidates=[make_candidate(
+                id=f"{self.name}-1", title="sqli", cwe="CWE-89",
+                component="http://good.htb/item", param="id",
+                source_engine="dynamic", tool=self.name)])
+
+    class _Reg:
+        def get(self, name):
+            return _Scanner(name)
+
+    def h(url, params):
+        v = params.get("id", "")
+        if v.endswith("'1'='1"):
+            return HttpResponse(url, 200, {}, "ROW " * 200)
+        if v.endswith("'1'='2"):
+            return HttpResponse(url, 200, {}, "none")
+        return HttpResponse(url, 200, {}, "ROW " * 200)
+
+    scope = EngagementScope(hosts=["good.htb"], urls=["http://good.htb/"])
+    sess = _session(scope=scope, authorized=True, transport=_FakeTransport(h))
+    sess.registry = _Reg()
+    out = io.StringIO()
+    # `agent` runs, pauses at the gate; the NEXT line (`go`) is the confirmation.
+    run_shell(sess, io.StringIO("agent http://good.htb/ find sqli\ngo\nexit\n"), out)
+    assert "agent done" in out.getvalue()
+    assert any(e["type"] in ("exploit_start", "scope_check") or
+               e.get("type") == "finding" for e in sess.sink.events)
+
+
 # -- a typed goal can never flip authorization (session state isolation) -----
 def test_goal_cannot_touch_authorization(monkeypatch):
     sess = _session(scope=EngagementScope(), authorized=False)

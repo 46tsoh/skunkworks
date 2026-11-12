@@ -477,6 +477,83 @@ def _cmd_shell(args: argparse.Namespace) -> int:
     return run_shell(session, _sys.stdin, _sys.stdout)
 
 
+def _cmd_agent(args: argparse.Namespace) -> int:
+    """Autonomous headless agent: drive an engagement from a goal.
+
+    Chains the live scanners (recon→web→dast, each gated), triages into one KB,
+    then STOPS at the confirm-to-exploit gate unless --exploit is set. Exit code:
+    2 refusal (fail-closed, before any traffic), 1 operational failure or a
+    requested exploit that did not confirm, 0 clean.
+    """
+    import json as _json
+    import sys as _sys
+    import time as _time
+
+    from aegis.agent import drive_agent, write_report
+    from aegis.engines.events import EventSink
+    from aegis.knowledge.base import KnowledgeBase
+    from aegis.redteam import EngagementScope, load_scope
+    from aegis.redteam.scope import ScopeError
+    from aegis.shell import _make_renderer
+
+    if args.exploit and args.scope is None:
+        print("refusing: --exploit requires --scope (an engagement file every "
+              "attempt is checked against).", file=sys.stderr)
+        return 2
+    if args.scope is not None:
+        try:
+            scope = load_scope(args.scope)
+        except ScopeError as exc:
+            print(f"scope error: {exc}", file=sys.stderr)
+            return 2
+    else:
+        scope = EngagementScope()  # default-deny: live phases refuse
+
+    cfg_kwargs = dict(
+        backend=args.backend,
+        decision_model=getattr(args, "decision_model", "jev"),
+        local_only=not args.allow_egress,
+        log_path=(args.out / "decisions.jsonl") if args.out else None)
+    if getattr(args, "mode", None) is not None:
+        cfg_kwargs["mode"] = args.mode
+    try:
+        aegis_cfg = AegisConfig.from_env(**cfg_kwargs)
+    except ValueError as exc:
+        print(f"config error: {exc}", file=sys.stderr)
+        return 2
+
+    # --json keeps stdout clean: transcript goes to stderr, the only stdout line
+    # is the final JSON result object a headless caller parses.
+    out_stream = _sys.stderr if args.json else _sys.stdout
+
+    def write(line: str = "") -> None:
+        print(line, file=out_stream)
+
+    sink = EventSink(path=(args.out / "events.jsonl") if args.out else None)
+    sink.on_emit = _make_renderer(write)
+    kb = KnowledgeBase()
+    started = _time.time()
+    outcome = drive_agent(
+        target=args.target, goal=args.goal, scope=scope,
+        authorized=bool(args.authorized), exploit=bool(args.exploit),
+        config=aegis_cfg, sink=sink, kb=kb, write=write)
+
+    if args.out:
+        write_report(args.out, kb, sink, None, run_id=args.run_id or "agent",
+                     target=args.target, config=aegis_cfg, started=started,
+                     outcome=outcome)
+        write(f"wrote {args.out / 'report.json'}")
+    if args.json:
+        print(_json.dumps(outcome.as_dict()))  # the ONLY stdout line in --json
+
+    if outcome.degraded:
+        return 1
+    if args.exploit and outcome.exploitable_leads and \
+            not any(a.get("verified") for a in outcome.attempted):
+        return 1
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="aegis",
@@ -643,6 +720,39 @@ def build_parser() -> argparse.ArgumentParser:
                          help="directory for the session transcript "
                               "(events.jsonl + decisions.jsonl)")
     shell_p.set_defaults(func=_cmd_shell)
+
+    agent_p = sub.add_parser(
+        "agent", help="autonomous headless agent — drive an engagement from a "
+                      "goal (chains scanners, stops before exploit)")
+    agent_p.add_argument("goal", nargs="?", default="",
+                         help="high-level instruction, folded into the agent's "
+                              "reasoning (optional)")
+    agent_p.add_argument("--target", required=True,
+                         help="host/URL to engage (authorized + in-scope)")
+    agent_p.add_argument("--scope", type=Path, default=None,
+                         help="engagement scope file; REQUIRED with --exploit; "
+                              "omitted → default-deny (no live phase runs)")
+    agent_p.add_argument("--authorized", action="store_true",
+                         help="authorize live scanning of in-scope targets")
+    agent_p.add_argument("--exploit", action="store_true",
+                         help="also send stage-1 exploit-confirm probes at "
+                              "auto-targetable leads (needs --scope)")
+    agent_p.add_argument("--mode",
+                         choices=["full-llm", "llm+decision", "static"],
+                         default=None, help="operating mode (overrides --backend)")
+    agent_p.add_argument("--decision-model", choices=["jev", "basal"],
+                         default="jev")
+    agent_p.add_argument("--backend", choices=["static", "basal", "jev", "llm"],
+                         default="static")
+    agent_p.add_argument("--allow-egress", action="store_true")
+    agent_p.add_argument("--json", action="store_true",
+                         help="print the final result as JSON on stdout "
+                              "(transcript is routed to stderr)")
+    agent_p.add_argument("--run-id", default=None)
+    agent_p.add_argument("--out", type=Path, default=None,
+                         help="directory for report.json + events.jsonl + "
+                              "decisions.jsonl (view in the dashboard)")
+    agent_p.set_defaults(func=_cmd_agent)
     return parser
 
 
