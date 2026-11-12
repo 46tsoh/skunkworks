@@ -198,6 +198,24 @@ def _cmd_scan(args: argparse.Namespace) -> int:
               f"`aegis scan` is for external hosts/URLs.", file=sys.stderr)
         return 2
 
+    # Optional engagement-scope gate (defense in depth): when a --scope file is
+    # given, the raw target must be in scope or the scan is refused before any
+    # network call. The target is passed verbatim so scope's URL-smuggling
+    # defenses see the real bytes.
+    if getattr(args, "scope", None) is not None:
+        from aegis.redteam import load_scope
+        from aegis.redteam.scope import ScopeError
+        try:
+            _scope = load_scope(args.scope)
+        except ScopeError as exc:
+            print(f"scope error: {exc}", file=sys.stderr)
+            return 2
+        _decision = _scope.check(args.target)
+        if not _decision.in_scope:
+            print(f"refusing: {args.target!r} is out of engagement scope "
+                  f"({_decision.reason}).", file=sys.stderr)
+            return 2
+
     active = getattr(args, "active", False)
     depth = "active (attack payloads)" if active else "baseline"
     print(f"[authorized scan] {args.tool} → {args.target}  "
@@ -414,6 +432,51 @@ def _cmd_dashboard(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_shell(args: argparse.Namespace) -> int:
+    """Interactive REPL over the dynamic agent loop (see docs/specs).
+
+    Every live verb (scan/attempt) funnels through one scope + authorization
+    gate; offline verbs (goal/focus/run) never reach the network. --scope is
+    optional and defaults to a default-deny empty scope (live verbs refuse, the
+    offline flow still works).
+    """
+    import sys as _sys
+
+    from aegis.engines.events import EventSink
+    from aegis.redteam import EngagementScope, load_scope
+    from aegis.redteam.scope import ScopeError
+    from aegis.shell import SessionState, run_shell
+
+    if getattr(args, "scope", None) is not None:
+        try:
+            scope = load_scope(args.scope)
+        except ScopeError as exc:  # fail-closed, before the REPL opens
+            print(f"scope error: {exc}", file=sys.stderr)
+            return 2
+    else:
+        scope = EngagementScope()  # default-deny: every live verb refuses
+
+    cfg_kwargs = dict(
+        backend=args.backend,
+        decision_model=getattr(args, "decision_model", "jev"),
+        local_only=not args.allow_egress,
+        log_path=(args.out / "decisions.jsonl") if args.out else None)
+    if getattr(args, "mode", None) is not None:
+        cfg_kwargs["mode"] = args.mode
+    try:
+        aegis_cfg = AegisConfig.from_env(**cfg_kwargs)
+    except ValueError as exc:  # e.g. backend=jev under local_only
+        print(f"config error: {exc}", file=sys.stderr)
+        return 2
+
+    sink = EventSink(path=(args.out / "events.jsonl") if args.out else None)
+    session = SessionState(scope=scope, authorized=bool(args.authorized),
+                           config=aegis_cfg, sink=sink, out_dir=args.out)
+    from aegis.shell import _make_renderer
+    sink.on_emit = _make_renderer(lambda line="": print(line, file=_sys.stdout))
+    return run_shell(session, _sys.stdin, _sys.stdout)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="aegis",
@@ -495,6 +558,10 @@ def build_parser() -> argparse.ArgumentParser:
     scan_p.add_argument("--out", type=Path, default=None,
                         help="directory for the run (report.json + events.jsonl "
                              "+ decisions.jsonl) — view it in the dashboard")
+    scan_p.add_argument("--scope", type=Path, default=None,
+                        help="optional engagement scope file; when given, the "
+                             "target must be in scope or the scan is refused "
+                             "(defense in depth over --authorized)")
     scan_p.set_defaults(func=_cmd_scan)
 
     exp = sub.add_parser(
@@ -552,6 +619,30 @@ def build_parser() -> argparse.ArgumentParser:
     dash.add_argument("--no-serve", action="store_true",
                       help="write the run data but do not start the dev server")
     dash.set_defaults(func=_cmd_dashboard)
+
+    shell_p = sub.add_parser(
+        "shell", help="interactive REPL over the dynamic agent loop "
+                      "(Strix-style; gated live actions)")
+    shell_p.add_argument("--scope", type=Path, default=None,
+                         help="engagement scope file; required for any LIVE "
+                              "verb (scan/attempt). Omitted → default-deny "
+                              "(offline verbs still work).")
+    shell_p.add_argument("--authorized", action="store_true",
+                         help="assert you are permitted to test the in-scope "
+                              "targets; required (with --scope) for live verbs")
+    shell_p.add_argument("--mode",
+                         choices=["full-llm", "llm+decision", "static"],
+                         default=None,
+                         help="operating mode (overrides --backend)")
+    shell_p.add_argument("--decision-model", choices=["jev", "basal"],
+                         default="jev")
+    shell_p.add_argument("--backend", choices=["static", "basal", "jev", "llm"],
+                         default="static")
+    shell_p.add_argument("--allow-egress", action="store_true")
+    shell_p.add_argument("--out", type=Path, default=None,
+                         help="directory for the session transcript "
+                              "(events.jsonl + decisions.jsonl)")
+    shell_p.set_defaults(func=_cmd_shell)
     return parser
 
 
