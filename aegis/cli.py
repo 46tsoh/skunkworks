@@ -463,14 +463,17 @@ def _cmd_shell(args: argparse.Namespace) -> int:
         log_path=(args.out / "decisions.jsonl") if args.out else None)
     if getattr(args, "mode", None) is not None:
         cfg_kwargs["mode"] = args.mode
-    aegis_cfg = AegisConfig.from_env(**cfg_kwargs)
+    try:
+        aegis_cfg = AegisConfig.from_env(**cfg_kwargs)
+    except ValueError as exc:  # e.g. backend=jev under local_only
+        print(f"config error: {exc}", file=sys.stderr)
+        return 2
 
     sink = EventSink(path=(args.out / "events.jsonl") if args.out else None)
     session = SessionState(scope=scope, authorized=bool(args.authorized),
                            config=aegis_cfg, sink=sink, out_dir=args.out)
     from aegis.shell import _make_renderer
-    sink.on_emit = _make_renderer(
-        session, lambda line="": print(line, file=_sys.stdout))
+    sink.on_emit = _make_renderer(lambda line="": print(line, file=_sys.stdout))
     return run_shell(session, _sys.stdin, _sys.stdout)
 
 
@@ -636,7 +639,6 @@ def build_parser() -> argparse.ArgumentParser:
     shell_p.add_argument("--backend", choices=["static", "basal", "jev", "llm"],
                          default="static")
     shell_p.add_argument("--allow-egress", action="store_true")
-    shell_p.add_argument("--run-id", default=None)
     shell_p.add_argument("--out", type=Path, default=None,
                          help="directory for the session transcript "
                               "(events.jsonl + decisions.jsonl)")

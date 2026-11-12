@@ -135,6 +135,55 @@ aegis exploit --target http://demo.testfire.net/search.jsp --param query \
 Scan only targets you own, public test ranges, or competition/CTF targets you are
 permitted to test — never arbitrary third parties.
 
+### Interactive shell — `aegis shell`
+
+A Strix-style **interactive REPL** over the dynamic agent loop: type a command,
+watch the agent think / act / stream its transcript live, then type the next.
+Unlike the one-shot subcommands, the session holds state (engagement scope, the
+operator's `--authorized` assertion, an accumulating knowledge base) across
+commands — but **every live action funnels through one scope + authorization
+gate**, and the agent loop never receives session authorization state, so a
+typed goal can never escape scope or reach an unauthorized host.
+
+```bash
+# offline exploration (no scope needed): narrate the loop over the sample target
+aegis shell
+  > goal look for injection in the login flow   # drives the loop (offline, no network)
+  > focus GET /search (q)                        # probe this surface first next time
+  > findings                                     # the session's confirmed findings
+  > transcript                                   # replay the event stream
+  > exit
+
+# live engagement: --scope + --authorized unlock the gated verbs
+aegis shell --scope engagement.scope.json --authorized --out ui/public/data
+  > scope                                        # print the frozen engagement scope
+  > scan demo.testfire.net recon                 # LIVE scan — refused if out of scope
+  > attempt xss http://demo.testfire.net/search.jsp query   # stage-1 confirm
+  > status
+  > exit
+```
+
+Offline verbs (`goal`/`focus`/`run`) wire **no scanner** and send **no traffic to
+any target** (in LLM modes they still contact the local planner endpoint —
+loopback under `local_only`). Live verbs (`scan`/`attempt`) are gated **at the
+dispatcher**: they require **both** `--authorized` and an in-scope target
+(default-deny — with no `--scope`, every live verb refuses). The weakness type
+for `attempt` is clamped to `xss|sqli|redirect|cmdi|traversal|ssti`, and the
+target is passed verbatim to the scope check. Pass `--out` to record the session
+transcript for the dashboard.
+
+> **Scope granularity for `scan`:** a live `scan` gates the seed target, then
+> runs the scanner container with outbound network — it does not re-check every
+> request the scanner makes (spidered paths, other ports, redirects). Scope a
+> `scan` engagement at host granularity. `attempt` re-checks every request
+> through its scope-gated transport.
+
+> **Note:** the interactive steering is *between* commands (the loop runs to
+> completion per command); true within-turn pause/resume is a named follow-up.
+> Offline, a typed instruction biases only a live LLM decider — `focus` is the
+> lever that changes routing deterministically. See
+> [`docs/specs/interactive-shell.md`](docs/specs/interactive-shell.md).
+
 ## Tools
 
 17 capability adapters sit behind one `Tool` interface (`aegis.tools`) — static

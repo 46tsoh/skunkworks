@@ -11,6 +11,7 @@ import pytest
 
 from aegis import cli
 from aegis.engines.events import EventSink
+from aegis.knowledge.base import KnowledgeBase
 from aegis.redteam import EngagementScope
 from aegis.shell import SessionState, gate, run_shell
 from aegis.config import AegisConfig
@@ -18,7 +19,11 @@ from aegis.config import AegisConfig
 
 @pytest.fixture(autouse=True)
 def _offline(monkeypatch):
-    for var in ("AEGIS_LLM", "AEGIS_LLM_API_BASE", "AEGIS_LLM_API_KEY"):
+    # Clear every Aegis env knob so the suite is deterministic and independent
+    # of the ambient environment — build_llm must never dial localhost, and the
+    # mode/backend must not drift from the test's explicit choice.
+    for var in ("AEGIS_LLM", "AEGIS_LLM_API_BASE", "AEGIS_LLM_API_KEY",
+                "AEGIS_MODE", "AEGIS_BACKEND", "AEGIS_LOCAL_ONLY"):
         monkeypatch.delenv(var, raising=False)
 
 
@@ -123,10 +128,10 @@ class _FakeTransport:
 
 def test_attempt_type_is_clamped(monkeypatch, capsys):
     scope = EngagementScope(hosts=["good.htb"], urls=["http://good.htb/"])
-    from aegis.shell import _cmd_attempt
+    from aegis.shell import _h_attempt
     sess = _session(scope=scope, authorized=True)
     lines = []
-    _cmd_attempt(sess, ["rce", "http://good.htb/x", "q"], lines.append)
+    _h_attempt(sess, ["rce", "http://good.htb/x", "q"], "", lines.append)
     assert any("unknown weakness type" in ln for ln in lines)
 
 
@@ -134,7 +139,7 @@ def test_attempt_passes_target_verbatim_to_engine(monkeypatch):
     """The typed target must reach the scope check / transport byte-for-byte —
     no pre-resolution — so scope's URL-smuggling defenses see the real bytes."""
     from aegis.redteam.http import HttpResponse
-    from aegis.shell import _cmd_attempt
+    from aegis.shell import _h_attempt
     seen = {}
 
     def h(url, params):
@@ -146,13 +151,13 @@ def test_attempt_passes_target_verbatim_to_engine(monkeypatch):
     scope = EngagementScope(hosts=["good.htb"], urls=["http://good.htb/"])
     sess = _session(scope=scope, authorized=True,
                     transport=_FakeTransport(h))
-    _cmd_attempt(sess, ["xss", "http://good.htb/search", "q"], [].append)
+    _h_attempt(sess, ["xss", "http://good.htb/search", "q"], "", [].append)
     assert seen["url"] == "http://good.htb/search"
 
 
 def test_attempt_confirms_with_injected_transport(monkeypatch, capsys):
     from aegis.redteam.http import HttpResponse
-    from aegis.shell import _cmd_attempt
+    from aegis.shell import _h_attempt
 
     def h(url, params):
         payload = params.get("q", "")
@@ -163,7 +168,7 @@ def test_attempt_confirms_with_injected_transport(monkeypatch, capsys):
     sess = _session(scope=scope, authorized=True,
                     transport=_FakeTransport(h))
     lines = []
-    _cmd_attempt(sess, ["xss", "http://good.htb/search", "q"], lines.append)
+    _h_attempt(sess, ["xss", "http://good.htb/search", "q"], "", lines.append)
     assert any("CONFIRMED" in ln for ln in lines)
 
 
@@ -212,7 +217,7 @@ def test_status_findings_transcript_help(monkeypatch, capsys):
 # -- scan verb: gate passes → runs the (faked) scanner, narrates ------------
 def test_scan_in_scope_runs_tool_and_narrates(monkeypatch, capsys):
     from aegis.tools.base import DockerBackedTool, ToolResult, ToolStatus
-    from aegis.shell import _cmd_scan, _load_sample_pool
+    from aegis.shell import _h_scan, _load_sample_pool
 
     class _FakeScanner(DockerBackedTool):
         allows_network = True
@@ -233,25 +238,94 @@ def test_scan_in_scope_runs_tool_and_narrates(monkeypatch, capsys):
     sess = _session(scope=scope, authorized=True)
     sess.registry = _FakeRegistry()
     lines = []
-    _cmd_scan(sess, ["http://good.htb/", "recon"], lines.append)
+    _h_scan(sess, ["http://good.htb/", "recon"], "", lines.append)
     blob = "\n".join(lines)
     assert "authorized+in-scope" in blob
     assert "finding(s) this command" in blob
 
 
 def test_scan_out_of_scope_never_runs_tool(monkeypatch):
-    from aegis.shell import _cmd_scan
+    """The structural gate lives at the dispatcher: an out-of-scope scan is
+    refused before the handler (and the registry) is ever reached."""
+    scope = EngagementScope(hosts=["good.htb"], urls=["http://good.htb/"])
+    sess = _session(scope=scope, authorized=True)
 
     class _Boom:
         def get(self, name):
             raise AssertionError("registry must not be touched when refused")
 
+    sess.registry = _Boom()
+    run_shell(sess, io.StringIO("scan http://evil.example/ recon\nexit\n"),
+              io.StringIO())
+    assert any(e["type"] == "scope_refused" for e in sess.sink.events)
+
+
+def test_empty_scan_does_not_backfill_demo_findings(monkeypatch):
+    """A real scan that finds nothing leaves pool=[] (not None); the next goal
+    must NOT substitute the bundled sample pool into the live session."""
+    from aegis.tools.base import DockerBackedTool, ToolResult, ToolStatus
+    from aegis.shell import _h_scan, _h_goal
+
+    class _EmptyScanner(DockerBackedTool):
+        allows_network = True
+
+        def __init__(self):
+            self.name = "recon"
+
+        def run(self, target, **kw):
+            return ToolResult("recon", ToolStatus.OK, candidates=[])
+
+    class _Reg:
+        def get(self, name):
+            return _EmptyScanner()
+
     scope = EngagementScope(hosts=["good.htb"], urls=["http://good.htb/"])
     sess = _session(scope=scope, authorized=True)
-    sess.registry = _Boom()
-    lines = []
-    _cmd_scan(sess, ["http://evil.example/", "recon"], lines.append)
-    assert any("REFUSED" in ln for ln in lines)
+    sess.registry = _Reg()
+    _h_scan(sess, ["http://good.htb/", "recon"], "", [].append)
+    assert sess.pool == []                       # real empty result, not None
+    _h_goal(sess, [], "keep looking", [].append)
+    assert len(sess.kb.accepted) == 0            # no demo findings injected
+
+
+# -- the operator instruction reaches the planner's STATE (not task) ---------
+def test_instruction_reaches_planner_state():
+    """Under a planner, `goal <text>` must fold the instruction into the state
+    the planner sees — proving the _context override works (task alone is inert)."""
+    from aegis.analysis.backends import build_router
+    from aegis.engines.events import EventSink
+    from aegis.shell import ShellSession, _load_sample_pool
+
+    class _RecordingPlanner:
+        def __init__(self):
+            self.prompts = []
+
+        def complete(self, prompt):
+            self.prompts.append(prompt)
+            return '{"action_index": 0, "rationale": "r", "assistant": "a", "think": "t"}'
+
+    pool = _load_sample_pool()
+    planner = _RecordingPlanner()
+    engine = ShellSession(pool, instruction="hunt the login SQLi",
+                          event_sink=EventSink())
+    engine.set_planner(planner)
+    router = build_router(list(pool), config=AegisConfig.from_env(backend="static"))
+    engine.run("", KnowledgeBase(), router, AegisConfig.from_env(backend="static"))
+    assert any("Operator instruction: hunt the login SQLi" in p
+               for p in planner.prompts)
+
+
+# -- a bad command never kills the session ----------------------------------
+def test_handler_exception_does_not_kill_repl(monkeypatch, capsys):
+    sess = _session()
+    # focus with a candidate whose .component access blows up would be contrived;
+    # instead exercise the guard via a goal that raises inside narration by
+    # pointing the pool at an object with no .component — the dispatcher must
+    # catch it, print an error, and keep going to the next command.
+    sess.pool = [object()]
+    run_shell(sess, io.StringIO("goal boom\nstatus\nexit\n"), (out := io.StringIO()))
+    text = out.getvalue()
+    assert "error:" in text and "steps=" in text  # survived to run `status`
 
 
 # -- a typed goal can never flip authorization (session state isolation) -----

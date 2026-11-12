@@ -57,11 +57,13 @@ a session-wide assertion. The map surfaced a real latent bypass: `_cmd_scan`
 `EngagementScope.check()`. Reused naively in a session, one `--authorized` would
 let a typed goal reach any host. The shell closes this structurally.
 
-1. **One gate, at the dispatcher.** Every **live** verb (`scan`, `attempt`) is
-   flagged in the verb table and funnels through a single
-   `_gate(session, target) -> (ok, reason)` chokepoint *before* any network
-   action. A future live verb that forgets to set the flag cannot reach the
-   network. `_gate` checks, in order:
+1. **One gate, at the dispatcher.** The REPL dispatches through a `_VERBS`
+   table; each entry carries a `live` flag and, for live verbs, a `target`
+   extractor. `run_shell` calls the single `gate(session, target)` chokepoint
+   for any `live` verb *before* its handler runs — so the gate is structural,
+   not a courtesy each handler must remember. A future live verb only has to be
+   added to the table with `live=True`; it cannot reach the network ungated.
+   `gate` checks, in order:
    - `session.authorized` is `True` (the one-time operator assertion), else refuse;
    - `session.scope.check(target).in_scope` is `True`, else refuse.
    `check()` **returns** a decision and never raises on refusal, so the gate
@@ -75,20 +77,28 @@ let a typed goal reach any host. The shell closes this structurally.
    frozen scope is never rebuilt or reloaded from any typed input.
 
 3. **The agent loop can never widen its own authority.** `engine.run` is called
-   with only `(target, kb, router, config, sink)`. It gets no reference to the
-   session's `authorized` flag or scope object. A typed goal therefore cannot
-   set/flip `--authorized`, set `--allow-egress`, select `backend=jev`
-   (also refused under `local_only`), reload scope, or enable
+   with only `(target, kb, router, config, sink)` — never `session.authorized`
+   or `session.scope`. The event sink's `on_emit` renderer closes over the
+   output callback alone (not the session), so there is no transitive back-door
+   from the loop to the authorization state either. The loop *does* receive
+   `config` and `sink` (it must), but neither carries authority it can change:
+   a typed goal cannot set/flip `--authorized`, set `--allow-egress`, select
+   `backend=jev` (also refused under `local_only`), reload scope, or enable
    `allow_post_exploit`/`allow_lateral` (those live only in the frozen scope
-   file, default off).
+   file, default off). The action set the loop can express is closed to
+   probe/triage/finish — none of which is an authority change.
 
-4. **Offline verbs are structurally offline.** `goal`/`focus`/`run` construct
-   the narration engine with **no registry** and never set `self._probe`, so
-   `DynamicEngine.run` builds a `SampleProbe` over the in-hand candidate pool —
-   no `RegistryProbe`, no `tool.run`, no socket. `run [path]` additionally
-   rejects any target that is not an existing local path (the inverse of
-   `scan`). A test asserts zero tool runs and an empty pool for an arbitrary
-   non-path target.
+4. **Offline verbs generate no *target* traffic.** `goal`/`focus`/`run`
+   construct the narration engine with **no registry** and never set
+   `self._probe`, so `DynamicEngine.run` builds a `SampleProbe` over the in-hand
+   candidate pool — no `RegistryProbe`, no `tool.run`, no request to any scanned
+   target. `run [path]` additionally rejects any target that is not an existing
+   local path (the inverse of `scan`). Caveat: under `--mode full-llm` /
+   `llm+decision` (or `AEGIS_MODE` set to one of those), the loop still contacts
+   the configured **planner** endpoint — loopback-only under `local_only`,
+   remote only with `--allow-egress`. So these verbs reach no *target* and no
+   scanner, but they are not literally socket-free in LLM modes; in the default
+   `static` mode they are.
 
 5. **Clamp and verbatim.** `attempt`'s `<type>` is clamped to
    `{xss,sqli,redirect,cmdi,traversal,ssti}` before `RedTeamEngine.attempt`
@@ -98,10 +108,31 @@ let a typed goal reach any host. The shell closes this structurally.
    bytes.
 
 6. **Hostile output is sanitized at the terminal.** The live renderer runs every
-   target-derived field (`tool_output.summary`, `message.text`, `finding.title`,
-   proof/evidence) through `sanitize_text` before printing, exactly as
-   `_cmd_exploit` does — a hostile target string cannot inject terminal control
-   sequences.
+   printed, target-derived field (`message.text`, `finding.title`, decision
+   fields, proof/evidence, and the echoed scan target) through `sanitize_text`
+   before writing, exactly as `_cmd_exploit` does — a hostile target string
+   cannot inject terminal control sequences. `sanitize_text` also truncates each
+   field to a per-call limit (default 160 chars in the renderer).
+
+### Known limits (documented, not fixed here)
+
+- **`scan` container egress is coarser than `attempt`.** `attempt` routes every
+  request (and every redirect) through `ScopeGatedTransport`, re-checking scope
+  on each hop. `scan`, by contrast, gates only the **seed** target and then runs
+  a Docker scanner on `--network=bridge` (full outbound). A scanner that spiders
+  the host, scans other ports, or follows an off-scope redirect is **not**
+  re-checked per request — and scope is path/port-granular, so an in-scope seed
+  under a URL-prefix scope can still let the container touch out-of-prefix paths
+  or ports. This is inherited from the one-shot `aegis scan` (which has always
+  used bridge networking). A per-request scope-enforcing egress proxy for scan
+  containers is future work; until then, scope a `scan` engagement at host
+  granularity and treat the seed gate as the boundary.
+- **`attempt` honours the scope's post-exploit / lateral switches.** It is
+  "stage-1 confirm" by default, but if the frozen scope sets
+  `allow_post_exploit`/`allow_lateral`, the red-team engine runs those stages on
+  a confirmed foothold (scope-gated, read-only). The shell renders their results
+  rather than hiding them. Those switches are operator data in the scope file, so
+  a typed goal cannot enable them.
 
 ### `aegis scan` retrofit (non-breaking)
 
@@ -157,12 +188,16 @@ reordering, not instruction-driven routing.
 
 ### Per-command knowledge base
 
-Each `goal` runs over a **fresh per-command `KnowledgeBase`**, whose accepted
-findings are then `merge`d into the session KB. This avoids the dedupe trap: a
-single shared KB would collapse a repeated `goal` over the same pool at the
-`dedupe` stage (`promote_candidate` dedupes against `kb.accepted`), filing zero
-new findings. Per-command KB → merge gives honest per-command results and an
-accumulating session view.
+Each `goal` runs over a **fresh per-command `KnowledgeBase`**; its accepted
+findings are then folded into the session KB **deduped by `(title, component)`**
+(the shell tracks a `_seen_keys` set and only `add_finding`s unseen ones). This
+threads between two traps: a single shared KB would collapse a repeated `goal`
+over the same pool to **zero** new findings at the `dedupe` stage
+(`promote_candidate` dedupes against `kb.accepted`), while a blind
+`KnowledgeBase.merge` of each command's KB would **double-count** the same
+findings across repeated goals. The per-command KB + keyed fold reports an
+honest per-command count (`N finding(s) this command; M new`) and an
+accumulating, de-duplicated session view.
 
 ## CLI
 
@@ -184,11 +219,17 @@ assertions read `capsys`. The `attempt` verb is tested with an injected
 hook on the session.
 
 Coverage targets the security invariants: unauthorized refusal, out-of-scope
-refusal (no tool run), default-deny with no scope, `run`/`goal` zero-tool-run
-and local-path rejection, verbatim target to `attempt`, type clamping, transcript
-continuity (events.jsonl line count strictly grows across two commands),
-unknown-command-stays-open, EOF-exits-0, `ScopeError`-returns-2-before-REPL, and
-the `--mode` offline guard.
+refusal enforced **at the dispatcher** (the handler/registry is never reached),
+default-deny with no scope, an empty live scan that is **not** back-filled with
+demo findings, local-path rejection for `run`, verbatim target to `attempt`,
+type clamping, `focus` reordering, the operator instruction reaching the
+**planner's state** (a recording stub under a planner), transcript continuity
+(the in-memory event buffer strictly grows across two commands), a handler
+exception that does **not** kill the REPL, unknown-command-stays-open,
+EOF-exits-0, `ScopeError`-returns-2-before-REPL, and that a typed goal leaves
+`authorized`/`local_only` untouched. Every test clears the `AEGIS_LLM*`,
+`AEGIS_MODE`, `AEGIS_BACKEND` and `AEGIS_LOCAL_ONLY` env so the suite is
+deterministic and `build_llm` never dials localhost.
 
 ## Deferred (named follow-ups)
 
