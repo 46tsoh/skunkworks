@@ -72,6 +72,11 @@ def parse(raw: str, target: str) -> List[Candidate]:
                 evidence=evidence,
                 source_engine="dynamic", tool="dast",
                 pluginid=pluginid, site=site_name,
+                # Persist the attacked parameter/method STRUCTURALLY (not only
+                # in free-text evidence) so the autonomous agent can auto-target
+                # a stage-1 exploit from this finding without scraping strings.
+                param=first.get("param") or None,
+                method=first.get("method") or None,
             ))
     return out
 

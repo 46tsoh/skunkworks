@@ -66,20 +66,27 @@ class SessionState:
 # --------------------------------------------------------------------------- #
 # THE gate — the dispatcher calls this before any live verb's handler runs.
 # --------------------------------------------------------------------------- #
-def gate(session: SessionState, target: str) -> "tuple[bool, str]":
-    """Authorize one live action against ``target``. Fail-closed.
+def authorize(scope: EngagementScope, authorized: bool,
+              target: str) -> "tuple[bool, str]":
+    """The single authorization decision for one live action. Fail-closed.
 
     Order: the operator's one-time ``--authorized`` assertion, then the frozen
     engagement scope (default-deny). ``check()`` returns a decision and never
-    raises, so we branch on ``in_scope`` — we do not ``try/except``.
+    raises, so we branch on ``in_scope`` — we do not ``try/except``. Shared by
+    the shell dispatcher and the autonomous agent so there is one gate.
     """
-    if not session.authorized:
-        return (False, "not authorized — start the shell with --authorized to "
-                "act against live targets you are permitted to test")
-    decision = session.scope.check(target)
+    if not authorized:
+        return (False, "not authorized — pass --authorized to act against live "
+                "targets you are permitted to test")
+    decision = scope.check(target)
     if not decision.in_scope:
         return (False, f"out of scope: {decision.reason}")
     return (True, "")
+
+
+def gate(session: SessionState, target: str) -> "tuple[bool, str]":
+    """Authorize one live action for a shell session (see :func:`authorize`)."""
+    return authorize(session.scope, session.authorized, target)
 
 
 # --------------------------------------------------------------------------- #
@@ -167,28 +174,56 @@ def _finding_key(f) -> tuple:
     return (getattr(f, "title", ""), comp)
 
 
-def _narrate(session: SessionState, pool: Sequence[Candidate],
-             instruction: str, write: Callable[[str], None]) -> int:
-    """Run the dynamic loop over ``pool``, then fold *new* accepted findings
-    into the session KB (deduped by title+component so a repeated goal over an
-    unchanged pool does not double-count). Returns the count of new findings."""
+def run_narration(pool: Sequence[Candidate], config: AegisConfig, sink,
+                  instruction: str = ""):
+    """Drive the dynamic loop once over ``pool`` into a fresh KnowledgeBase.
+
+    Reused by the shell's ``goal`` verb and by the autonomous agent for its
+    per-phase triage. Returns ``(cmd_kb, router)``. Offline (static mode) this
+    is deterministic and generates no target traffic.
+    """
     from aegis.analysis.backends import build_router
 
-    engine = ShellSession(pool, instruction=instruction, event_sink=session.sink)
-    if session.config.uses_planner:
+    engine = ShellSession(pool, instruction=instruction, event_sink=sink)
+    if config.uses_planner:
         from aegis.llm import build_llm
-        engine.set_planner(build_llm(local_only=session.config.local_only))
-    router = build_router(list(pool), config=session.config)
+        engine.set_planner(build_llm(local_only=config.local_only))
+    router = build_router(list(pool), config=config)
     cmd_kb = KnowledgeBase()
-    engine.run("", cmd_kb, router, session.config)
+    engine.run("", cmd_kb, router, config)
+    return cmd_kb, router
+
+
+def fold_findings(session_kb: KnowledgeBase, cmd_kb: KnowledgeBase,
+                  seen_keys: set) -> int:
+    """Fold a command's results into a session KB: accepted findings deduped by
+    (title, component), and rejections deduped by (candidate id, stage) so the
+    report carries the full triage picture (accepted AND rejected), matching the
+    shape ``aegis run`` writes. Returns the count of genuinely new findings."""
     new = 0
     for f in cmd_kb.accepted:
         key = _finding_key(f)
-        if key in session._seen_keys:
+        if key in seen_keys:
             continue
-        session._seen_keys.add(key)
-        session.kb.add_finding(f)
+        seen_keys.add(key)
+        session_kb.add_finding(f)
         new += 1
+    rej_seen = {(r.candidate.id, r.stage) for r in session_kb.rejected}
+    for r in cmd_kb.rejected:
+        rk = (r.candidate.id, r.stage)
+        if rk in rej_seen:
+            continue
+        rej_seen.add(rk)
+        session_kb.rejected.append(r)
+    return new
+
+
+def _narrate(session: SessionState, pool: Sequence[Candidate],
+             instruction: str, write: Callable[[str], None]) -> int:
+    """Run the dynamic loop over ``pool``, then fold *new* accepted findings
+    into the session KB (deduped so a repeated goal does not double-count)."""
+    cmd_kb, _ = run_narration(pool, session.config, session.sink, instruction)
+    new = fold_findings(session.kb, cmd_kb, session._seen_keys)
     session.steps += 1
     write(f"  ({len(cmd_kb.accepted)} finding(s) this command; {new} new; "
           f"{len(session.kb.accepted)} in session)")
@@ -332,6 +367,26 @@ def _h_scan(session, parts, arg, write) -> None:
     _narrate(session, cands, "", write)
 
 
+def _h_agent(session, parts, arg, write) -> None:
+    # The dispatcher has already gated parts[0] (authorized + in-scope). Runs
+    # the autonomous driver, streaming; at the confirm-to-exploit gate it reads
+    # the NEXT line from the REPL's stdin as the go/no-go answer.
+    from aegis.agent import drive_agent
+
+    target = parts[0]
+    goal = " ".join(parts[1:]) if len(parts) > 1 else ""
+    confirm = getattr(session, "_read_line", None)
+    outcome = drive_agent(
+        target=target, goal=goal, scope=session.scope,
+        authorized=session.authorized, exploit=False, config=session.config,
+        sink=session.sink, kb=session.kb, write=write,
+        registry=session.registry, transport=session.transport, confirm=confirm)
+    session.steps += 1
+    fold = len(session.kb.accepted)
+    write(f"  agent done: {outcome.findings} finding(s) this run; "
+          f"{len(outcome.attempted)} attempt(s); {fold} in session.")
+
+
 def _h_attempt(session, parts, arg, write) -> None:
     # The dispatcher has already gated parts[1] (authorized + in-scope). The
     # type is clamped here; the red-team engine re-checks scope (defense in
@@ -413,6 +468,9 @@ _VERBS = {
     "attempt": _Verb(
         _h_attempt, live=True, usage="usage: attempt <type> <target> <param>",
         target=lambda parts: parts[1] if len(parts) >= 3 else None),
+    "agent": _Verb(
+        _h_agent, live=True, usage="usage: agent <target> [goal...]",
+        target=lambda parts: parts[0] if len(parts) >= 1 else None),
 }
 
 
@@ -430,6 +488,8 @@ commands:
   scan <target> [tool]         LIVE scanner (gated: --authorized + in-scope)
   attempt <type> <target> <param>   stage-1 red-team confirm (gated)
                                type ∈ xss|sqli|redirect|cmdi|traversal|ssti
+  agent <target> [goal...]     autonomous: chain scanners, triage, then pause
+                               for `go` before sending stage-1 exploit probes
   exit | quit                  leave"""
 
 
@@ -445,6 +505,10 @@ def run_shell(session: SessionState, stdin: TextIO, stdout: TextIO) -> int:
     write("aegis shell — interactive agent REPL (type `help`, `exit` to leave)")
     _h_scope(session, [], "", write)
     write("")
+
+    # The autonomous `agent` verb reads its go/no-go confirmation from the next
+    # REPL line; expose a reader over the same stdin iterator.
+    session._read_line = lambda: next(stdin, "")
 
     for raw in stdin:
         line = raw.strip()

@@ -184,6 +184,37 @@ transcript for the dashboard.
 > lever that changes routing deterministically. See
 > [`docs/specs/interactive-shell.md`](docs/specs/interactive-shell.md).
 
+### Autonomous agent — `aegis agent`
+
+The headless, goal-driven mode: give it a target and it drives the engagement
+itself — chains the live scanners (recon → web → dast), triages every finding
+through the dynamic loop into one knowledge base, and **stops at the
+confirm-to-exploit gate**. Stage-1 exploit probes fire only on explicit
+go-ahead.
+
+```bash
+# autonomous recon + triage, stop before exploit; machine-readable result
+aegis agent "map the login and search flows" \
+    --target http://demo.testfire.net --scope engagement.scope.json \
+    --authorized --out ui/public/data --json
+
+# add --exploit to also send stage-1 confirm probes at auto-targetable leads
+aegis agent "confirm the SQLi" --target http://demo.testfire.net \
+    --scope engagement.scope.json --authorized --exploit --json
+```
+
+Exit code: `2` refusal (unauthorized / `--exploit` without `--scope` / scope
+error — before any traffic), `1` operational failure or a requested exploit that
+did not confirm, `0` clean. With `--json` the final result object is the only
+line on **stdout** (the transcript goes to **stderr**), so CI can parse it;
+`--out` additionally writes a dashboard-readable `report.json`. Without
+`--authorized` the agent runs **offline narration only** and never scans or
+exploits.
+
+The same driver is available interactively — `aegis shell` has an
+`agent <target> [goal]` verb that streams its work and pauses for a typed `go`
+before any exploit. See [`docs/specs/autonomous-agent.md`](docs/specs/autonomous-agent.md).
+
 ## Tools
 
 17 capability adapters sit behind one `Tool` interface (`aegis.tools`) — static
