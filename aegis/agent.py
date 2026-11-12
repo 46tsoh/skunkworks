@@ -80,7 +80,8 @@ def attemptable(finding) -> Optional["tuple[str, str, str]"]:
         return None
     param = cand.metadata.get("param")
     if not param:
-        qs = parse_qs(urlparse(target).query)
+        # keep_blank_values so a valueless query param (?id=) is still found.
+        qs = parse_qs(urlparse(target).query, keep_blank_values=True)
         param = next(iter(qs), None)
     if not param:
         return None
@@ -101,6 +102,9 @@ class AgentOutcome:
     exploit_ran: bool = False
     degraded: bool = False
     n_candidates: int = 0
+    decisions: int = 0
+    cache_hits: int = 0
+    all_refused: bool = False
 
     def as_dict(self) -> dict:
         return {
@@ -109,7 +113,7 @@ class AgentOutcome:
             "skipped_leads": self.skipped_leads, "attempted": self.attempted,
             "exploit_ran": self.exploit_ran,
             "verified": sum(1 for a in self.attempted if a.get("verified")),
-            "degraded": self.degraded,
+            "degraded": self.degraded, "all_refused": self.all_refused,
         }
 
 
@@ -141,6 +145,22 @@ def drive_agent(
     seen_keys: set = set()
     outcome = AgentOutcome(live=authorized)
 
+    # Honest disclosure: under an LLM mode with nothing configured, build_llm
+    # returns the deterministic TemplateLLM stub — the transcript looks agentic
+    # but is not model-driven. Say so once, where the operator sees it.
+    if config.uses_planner:
+        from aegis.llm import TemplateLLM, build_llm
+        if isinstance(build_llm(local_only=config.local_only), TemplateLLM):
+            write("  planner: TemplateLLM stub (no AEGIS_LLM* configured) — "
+                  "reasoning is templated, not model-driven.")
+
+    def _narrate_into(kb_, pool_):
+        cmd_kb, router = run_narration(pool_, config, sink, goal)
+        fold_findings(kb_, cmd_kb, seen_keys)
+        m = getattr(router, "metrics", None)
+        outcome.decisions += getattr(m, "calls", 0)
+        outcome.cache_hits += getattr(m, "cache_hits", 0)
+
     # 1. SCAN — chain the live scanners, each gated, each triaged into the KB.
     if authorized:
         for phase in phases:
@@ -167,19 +187,21 @@ def drive_agent(
             outcome.n_candidates += len(cands)
             write(f"  [{phase}] {ptarget} → {len(cands)} candidate(s); triaging…")
             if cands:
-                cmd_kb, _ = run_narration(cands, config, sink, goal)
-                fold_findings(kb, cmd_kb, seen_keys)
+                _narrate_into(kb, cands)
             outcome.phases.append({"phase": phase, "target": ptarget,
                                    "status": "ok", "candidates": len(cands)})
+        outcome.all_refused = bool(outcome.phases) and all(
+            p["status"] in ("refused", "refused_local") for p in outcome.phases)
     else:
-        # Not authorized: no live traffic. Narrate offline over the sample pool
-        # so the agent still reasons and demonstrates the flow — clearly labelled.
-        write("  not authorized — offline narration only (no live scan).")
+        # Not authorized: no live traffic. Narrate offline over the bundled
+        # SAMPLE corpus to demonstrate the flow — clearly labelled, and the
+        # report attributes these to the sample, never to the real --target.
+        write("  not authorized — offline SAMPLE dry-run (no live scan; "
+              "findings are the bundled sample, not your --target).")
         pool = _load_sample_pool()
         outcome.n_candidates = len(pool)
         if pool:
-            cmd_kb, _ = run_narration(pool, config, sink, goal)
-            fold_findings(kb, cmd_kb, seen_keys)
+            _narrate_into(kb, pool)
 
     kb.rank()
     outcome.findings = len(kb.accepted)
@@ -203,8 +225,10 @@ def drive_agent(
     # 3. CONFIRM-TO-EXPLOIT GATE — stop here unless explicitly told to proceed.
     if not outcome.exploitable_leads:
         return outcome
-    proceed = exploit
-    if not proceed and confirm is not None:
+    # Defense in depth: exploit requires authorization even if a lead slipped
+    # through (the dispatcher/CLI already gate, but never trust a single gate).
+    proceed = exploit and authorized
+    if not proceed and authorized and confirm is not None:
         write(f"  {len(outcome.exploitable_leads)} exploitable lead(s). "
               f"Type `go` to send stage-1 confirm probes (anything else skips):")
         proceed = (confirm() or "").strip().lower() in ("go", "yes", "y")
@@ -282,19 +306,22 @@ def write_report(out_dir: Path, kb: KnowledgeBase, sink, router, *, run_id: str,
         "accepted": len(kb.accepted),
         "rejected": len(kb.rejected),
         "cross_engine_dedup": 0,
-        "decisions": getattr(getattr(router, "metrics", None), "calls", 0),
-        "decision_cache_hits": getattr(getattr(router, "metrics", None),
-                                       "cache_hits", 0),
+        "decisions": outcome.decisions,
+        "decision_cache_hits": outcome.cache_hits,
         "degraded": outcome.degraded,
         "tool_failures": [],
         "agent": outcome.as_dict(),
     }
     payload = kb.as_dict()
     payload["transcript"] = sink.events
+    payload["offline"] = not outcome.live
+    # Offline dry-runs must never attribute sample findings to the real target.
+    run_target = target if outcome.live else f"offline-sample (requested: {target})"
     payload["run"] = {
-        "run_id": run_id, "target": target, "backend": config.backend,
+        "run_id": run_id, "target": run_target, "backend": config.backend,
+        # name 'dynamic' so the dashboard's engine-keyed views resolve it.
         "engines": [EngineReport(
-            name="agent", kind="dynamic", available=True, ran=True,
+            name="dynamic", kind="dynamic", available=True, ran=True,
             candidates=outcome.n_candidates, accepted=len(kb.accepted),
             rejected=len(kb.rejected)).as_dict()],
         "cross_engine_dedup": 0, "started_at": started,

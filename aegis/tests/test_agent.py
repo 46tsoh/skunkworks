@@ -200,3 +200,49 @@ def test_cli_writes_report_json(tmp_path):
     report = json.loads((out / "report.json").read_text())
     assert "accepted" in report and "run" in report and "transcript" in report
     assert report["metrics"]["agent"]["live"] is False
+    # offline run must NOT attribute sample findings to the real --target
+    assert report["offline"] is True
+    assert "offline-sample" in report["run"]["target"]
+    assert report["run"]["engines"][0]["name"] == "dynamic"
+
+
+def test_report_carries_rejections(tmp_path):
+    """The agent KB must carry rejected candidates (not just accepted), matching
+    `aegis run`'s report shape — a candidate triaged out is recorded."""
+    class _FalsePositiveScanner(DockerBackedTool):
+        allows_network = True
+
+        def __init__(self, name):
+            self.name = name
+
+        def run(self, target, **kw):
+            return ToolResult(self.name, ToolStatus.OK, candidates=[make_candidate(
+                id=f"{self.name}-fp", title="benign info", cwe="CWE-200",
+                component="http://good.htb/x", severity="low",
+                source_engine="dynamic", tool=self.name,
+                hints={"true_positive_prob": 0.0})])
+
+    kb = KnowledgeBase()
+    drive_agent(target="http://good.htb/", goal="x", scope=_scope(),
+                authorized=True, exploit=False, config=_cfg(),
+                sink=EventSink(path=None), kb=kb, write=[].append,
+                registry=_Registry(_FalsePositiveScanner))
+    assert len(kb.rejected) > 0
+
+
+def test_cli_all_refused_returns_2(tmp_path):
+    scope_file = tmp_path / "s.json"
+    scope_file.write_text(json.dumps({
+        "engagement": "t", "authorized_by": "op",
+        "expires": "2999-01-01T00:00:00Z",
+        "targets": {"hosts": ["good.htb"], "urls": ["http://good.htb/"]},
+    }), encoding="utf-8")
+    rc = cli.main(["agent", "x", "--target", "http://evil.example/",
+                   "--scope", str(scope_file), "--authorized"])
+    assert rc == 2
+
+
+def test_cli_exploit_without_authorized_refuses(capsys):
+    rc = cli.main(["agent", "x", "--target", "good.htb", "--exploit"])
+    assert rc == 2
+    assert "requires --authorized" in capsys.readouterr().err

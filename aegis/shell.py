@@ -196,8 +196,10 @@ def run_narration(pool: Sequence[Candidate], config: AegisConfig, sink,
 
 def fold_findings(session_kb: KnowledgeBase, cmd_kb: KnowledgeBase,
                   seen_keys: set) -> int:
-    """Fold a command's accepted findings into a session KB, deduped by
-    (title, component). Returns the count of genuinely new findings."""
+    """Fold a command's results into a session KB: accepted findings deduped by
+    (title, component), and rejections deduped by (candidate id, stage) so the
+    report carries the full triage picture (accepted AND rejected), matching the
+    shape ``aegis run`` writes. Returns the count of genuinely new findings."""
     new = 0
     for f in cmd_kb.accepted:
         key = _finding_key(f)
@@ -206,6 +208,13 @@ def fold_findings(session_kb: KnowledgeBase, cmd_kb: KnowledgeBase,
         seen_keys.add(key)
         session_kb.add_finding(f)
         new += 1
+    rej_seen = {(r.candidate.id, r.stage) for r in session_kb.rejected}
+    for r in cmd_kb.rejected:
+        rk = (r.candidate.id, r.stage)
+        if rk in rej_seen:
+            continue
+        rej_seen.add(rk)
+        session_kb.rejected.append(r)
     return new
 
 

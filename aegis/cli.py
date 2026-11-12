@@ -496,6 +496,10 @@ def _cmd_agent(args: argparse.Namespace) -> int:
     from aegis.redteam.scope import ScopeError
     from aegis.shell import _make_renderer
 
+    if args.exploit and not args.authorized:
+        print("refusing: --exploit requires --authorized (you must assert you "
+              "are permitted to send exploit probes).", file=sys.stderr)
+        return 2
     if args.exploit and args.scope is None:
         print("refusing: --exploit requires --scope (an engagement file every "
               "attempt is checked against).", file=sys.stderr)
@@ -546,6 +550,8 @@ def _cmd_agent(args: argparse.Namespace) -> int:
     if args.json:
         print(_json.dumps(outcome.as_dict()))  # the ONLY stdout line in --json
 
+    if outcome.all_refused:  # authorized, but every phase was out of scope
+        return 2
     if outcome.degraded:
         return 1
     if args.exploit and outcome.exploitable_leads and \
@@ -725,8 +731,10 @@ def build_parser() -> argparse.ArgumentParser:
         "agent", help="autonomous headless agent — drive an engagement from a "
                       "goal (chains scanners, stops before exploit)")
     agent_p.add_argument("goal", nargs="?", default="",
-                         help="high-level instruction, folded into the agent's "
-                              "reasoning (optional)")
+                         help="high-level instruction, folded into the triage "
+                              "state; it steers routing only under an LLM "
+                              "planner (full-llm/llm+decision with AEGIS_LLM* "
+                              "set), not the fixed recon→web→dast phase order")
     agent_p.add_argument("--target", required=True,
                          help="host/URL to engage (authorized + in-scope)")
     agent_p.add_argument("--scope", type=Path, default=None,
