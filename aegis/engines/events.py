@@ -20,7 +20,7 @@ import json
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 # The event vocabulary the dashboard transcript understands.
 EVENT_TYPES = (
@@ -46,6 +46,11 @@ class EventSink:
     """
 
     path: Optional[Path] = None
+    #: Optional live subscriber, invoked with each event *after* it is recorded
+    #: (under the lock). A single in-process observer — e.g. the interactive
+    #: shell's terminal renderer. It must be cheap, non-reentrant (never call
+    #: back into ``emit``) and must not raise; ``emit`` guards it regardless.
+    on_emit: Optional[Callable[[dict], None]] = None
     _events: List[dict] = field(default_factory=list)
     _seq: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock)
@@ -69,6 +74,13 @@ class EventSink:
                     with open(self.path, "a", encoding="utf-8") as fh:
                         fh.write(json.dumps(event) + "\n")
                 except OSError:
+                    pass
+            if self.on_emit is not None:
+                # A subscriber error must never break the agent loop or the
+                # JSONL write (the audit trail), so swallow anything it raises.
+                try:
+                    self.on_emit(event)
+                except Exception:  # noqa: BLE001 - renderer must not be fatal
                     pass
             return self._seq
 
