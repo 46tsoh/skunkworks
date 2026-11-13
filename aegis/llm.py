@@ -243,7 +243,8 @@ def plan_next_action(
         data = json.loads(text[lo:hi + 1])
         idx = max(0, min(int(data.get("action_index", 0)), len(opts) - 1))
         return idx, str(data.get("rationale", "")).strip()[:200]
-    except (LLMError, ValueError, KeyError, TypeError):
+    except (LLMError, ValueError, KeyError, TypeError, AttributeError):
+        # AttributeError: a non-str complete() return (e.g. JSON-null content).
         return 0, ""
 
 
@@ -330,7 +331,11 @@ def plan_phases(
         if not isinstance(proposed, list):  # e.g. {"phases": "recon"}
             proposed = []
         return clamp_phases(proposed, allowed)
-    except (LLMError, ValueError, KeyError, TypeError):
+    except (LLMError, ValueError, KeyError, TypeError, AttributeError):
+        # AttributeError covers a non-str provider.complete() return (None/int/
+        # list/dict → text.find fails): a Chat Completions message.content of
+        # JSON null (tool-call / content-filtered / some local servers) must
+        # still fail closed to the full allowed order, never crash the engagement.
         return clamp_phases((), allowed)  # -> allowed (full order)
 
 
@@ -375,7 +380,8 @@ def agent_turn(
             "action_index": idx,
             "rationale": str(data.get("rationale", "")).strip()[:200],
         }
-    except (LLMError, ValueError, KeyError, TypeError):
+    except (LLMError, ValueError, KeyError, TypeError, AttributeError):
+        # AttributeError: a non-str complete() return (e.g. JSON-null content).
         return fallback
 
 

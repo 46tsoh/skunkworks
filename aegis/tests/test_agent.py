@@ -364,6 +364,20 @@ def test_plan_phases_string_phases_falls_back():
     assert plan_phases(_StringPhases(), "x", DEFAULT_PHASES) == DEFAULT_PHASES
 
 
+@pytest.mark.parametrize("bad", [None, 123, ["not", "a", "string"], {"k": "v"}])
+def test_plan_phases_non_str_return_fails_closed(bad):
+    """A real OpenAI-compatible server can return a JSON-null (or otherwise
+    non-str) message.content — complete() then returns a non-str. plan_phases
+    must fail CLOSED to the full allowed order, never crash drive_agent with an
+    uncaught AttributeError (regression for the milestone-24 review finding)."""
+    class _NonStr:
+        name = "nonstr"
+        def __init__(self, v): self._v = v
+        def complete(self, prompt): return self._v
+        def chat(self, m): return self._v
+    assert plan_phases(_NonStr(bad), "x", DEFAULT_PHASES) == DEFAULT_PHASES
+
+
 # -- drive_agent with a real planner (invariants end-to-end) ------------------
 def _drive_with_planner(phases_returned, *, target="http://good.htb/",
                         scope=None, monkeypatch=None):
