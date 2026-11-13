@@ -339,6 +339,69 @@ def plan_phases(
         return clamp_phases((), allowed)  # -> allowed (full order)
 
 
+#: Planner tokens (case-folded) that request ZAP's ACTIVE scan (attack payloads).
+_DEPTH_ACTIVE_TOKENS = frozenset({"active", "full"})
+
+
+def clamp_depth(proposed: object, *, active_allowed: bool) -> bool:
+    """Clamp a planner DAST-depth request to a bool, CAPPED by the operator ceiling.
+
+    Pure, no I/O. Returns ``True`` (ZAP active full-scan — *attack payloads*) ONLY
+    when ``active_allowed`` is ``True`` AND ``proposed`` actually requests active;
+    otherwise ``False`` (the passive baseline). ``active_allowed`` is the operator
+    permission (keyword-only, no default) and is checked **first**, so for
+    ``active_allowed=False`` the function is the constant ``False`` over all inputs
+    — the ceiling can never be exceeded. The planner never sees ``active_allowed``.
+
+    Like :func:`clamp_phases`, the output vocabulary is a frozen set the caller
+    owns (here ``{True, False}``): a planner token is only ever a membership test
+    against :data:`_DEPTH_ACTIVE_TOKENS` or a direct bool read — never executed,
+    char-iterated, or used to author an arg/command/tool-name/target. A hostile or
+    degenerate proposal (injection string, list, dict, ``None``, int) fails closed
+    to passive.
+    """
+    if not active_allowed:
+        return False  # OPERATOR CEILING: attack traffic forbidden, whatever proposed is
+    if isinstance(proposed, bool):
+        return proposed  # JSON true/false (still under the ceiling above)
+    if isinstance(proposed, str):
+        return proposed.strip().lower() in _DEPTH_ACTIVE_TOKENS
+    return False  # None/int/list/dict/anything else -> passive (fail-closed)
+
+
+def plan_depth(provider: LLMProvider, goal: str, *, active_allowed: bool) -> bool:
+    """The 'LLM plans' half for DAST depth: pick passive vs active for ``goal``.
+
+    One generative call, then :func:`clamp_depth`. Short-circuits to ``False``
+    (**no** model call, no network dependency) when ``active_allowed`` is ``False``
+    — so the passive path is byte-for-byte today's. Any failure fails **closed** to
+    passive. ``goal`` is embedded strictly as data; ``active_allowed`` is NEVER
+    stated in the prompt — :func:`clamp_depth` is the trust boundary.
+    """
+    if not active_allowed:
+        return False
+    prompt = (
+        "You are the coordinator planning a defensive security test of an "
+        "authorized target. Decide the DAST scan depth for the goal. 'passive' "
+        "spiders and runs passive rules only (no attack traffic). 'active' sends "
+        "real attack payloads to exercise each parameter. Prefer passive unless "
+        "the goal clearly calls for actively exercising injection/parameter "
+        f"vulnerabilities.\n\nGoal: {goal}\n\n"
+        'Reply ONLY as JSON: {"depth": "passive"|"active"}.'
+    )
+    try:
+        text = provider.complete(prompt)
+        lo, hi = text.find("{"), text.rfind("}")
+        if lo == -1 or hi == -1:
+            return clamp_depth(None, active_allowed=active_allowed)  # -> False
+        data = json.loads(text[lo:hi + 1])
+        return clamp_depth(data.get("depth"), active_allowed=active_allowed)
+    except (LLMError, ValueError, KeyError, TypeError, AttributeError):
+        # AttributeError: a non-str complete() return (JSON-null message.content)
+        # — the M24 plan_phases regression class; must fail closed, never raise.
+        return clamp_depth(None, active_allowed=active_allowed)  # -> False
+
+
 def agent_turn(
     provider: LLMProvider, role: str, task: str, state: str,
     options: Sequence[str]
@@ -401,5 +464,5 @@ __all__ = [
     "LLMProvider", "LLMError", "TemplateLLM", "OpenAICompatProvider",
     "build_llm", "judge_backend", "summarize", "plan_next_action",
     "agent_turn", "explain_finding", "is_local_base",
-    "clamp_phases", "plan_phases",
+    "clamp_phases", "plan_phases", "clamp_depth", "plan_depth",
 ]

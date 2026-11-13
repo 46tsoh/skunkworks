@@ -26,6 +26,13 @@ explicit go-ahead:
 This is the chosen safety default: unattended autonomy up to the point of
 sending attack traffic, a human beat before payloads.
 
+**Active DAST is on the payloads side of this line.** ZAP's active scan sends
+real attack payloads, so it is *not* autonomous: the dast phase defaults to the
+passive baseline. A configured planner may *request* active depth for the goal,
+but attack traffic runs only when the operator set `--active-dast` (default off),
+mirroring `scan --active` and `--exploit` — the human beat, set once before the
+run. See *DAST depth* below.
+
 ## Flow (`drive_agent`)
 
 1. **Scan** — for each phase in `recon, web, dast`:
@@ -35,6 +42,12 @@ sending attack traffic, a human beat before payloads.
      **clamped to this fixed set** (`clamp_phases`) before it is used — it can
      prune or reorder, never add a phase or change the target. Offline /
      `TemplateLLM` / `static` run all three in order, exactly as before.
+   - **DAST depth** (the one goal-adaptive *within-phase* axis): for the dast
+     phase, when a real planner is configured **and** `--active-dast` was passed,
+     `plan_depth()` proposes passive/active for the goal and `clamp_depth()`
+     enforces the operator ceiling; a triple-gate (operator-permitted **and**
+     planner-selected **and** `phase == "dast"`) decides the ZAP scan. Offline /
+     `TemplateLLM` / `static`, and any planner failure, run the passive baseline.
    - derive the per-phase target form (`phase_target`): a **bare host** for
      `recon` (nmap), a **URL** for `web`/`dast` (nuclei/ZAP);
    - `authorize(scope, authorized, phase_target)` on the **exact bytes the tool
@@ -79,19 +92,30 @@ exploit. This keeps the whole flow demonstrable and testable with no Docker/netw
   or reorder but never add a phase, change `--target`, or flip authorization.
   Every selected phase still passes `authorize()` on its exact per-phase target
   before any traffic.
+- **DAST depth is clamped** to the operator ceiling, paralleling phase
+  selection. The planner receives only the goal and a passive/active description
+  (never `scope`/`authorized`/`active_allowed`/`target`); `clamp_depth` draws
+  from `{active, passive}` and returns `active` only when the operator passed
+  `--active-dast` **and** the planner chose it. So the planner can request
+  passive or active but can **never** enable attack traffic the operator did not
+  permit — with the flag off, the result is constant passive whatever the
+  planner says. Model-authored scanner args/commands stay out of scope (`argv`
+  is code-authored; the only planner-influenced knob is this clamped bool).
 
 ## CLI contract
 
 ```
 aegis agent "<goal>" --target <host|url> [--scope F] [--authorized] [--exploit]
-                     [--mode M] [--backend B] [--allow-egress]
+                     [--active-dast] [--mode M] [--backend B] [--allow-egress]
                      [--out DIR] [--json] [--run-id ID]
 ```
 
-- **Exit codes** (mirroring `aegis exploit`): `2` refusal — `--exploit` without
-  `--scope`, a scope/`config` error — printed to stderr **before any traffic**;
-  `1` operational failure (a scanner phase errored → `degraded`) **or** an
-  `--exploit` run where leads existed but none confirmed; `0` clean.
+- **Exit codes** (mirroring `aegis exploit`): `2` refusal — `--exploit` or
+  `--active-dast` without `--authorized`/`--scope`, a scope/`config` error —
+  printed to stderr **before any traffic**; `1` operational failure (a scanner
+  phase errored → `degraded`) **or** an `--exploit` run where leads existed but
+  none confirmed; `0` clean. (`--active-dast` does not change the `0`/`1`
+  contract — a permitted active run that finds nothing is still `0`.)
 - **`--out DIR`** writes `report.json` (the same shape `aegis run` writes, so the
   dashboard renders it), plus `events.jsonl` and `decisions.jsonl`. The agent
   summary is under `metrics.agent`.
@@ -121,8 +145,14 @@ Claude-like shell.
   `llm+decision` with no `AEGIS_LLM*`, which falls back to `TemplateLLM`) the
   chain is the full fixed sequence, as before. A planned run may be **narrower**
   than a full chain (e.g. pruning `recon` changes which findings exist) —
-  intended adaptivity, not a safety relaxation; free-form **tool choice** within
-  a phase is still deferred.
+  intended adaptivity, not a safety relaxation.
+- **Within-phase tool *selection* is 1:1 today** (a seam, not a capability):
+  each live phase maps to exactly one network adapter (recon→nmap, web→nuclei,
+  dast→ZAP); proxy/browser run `--network none` over saved pages and are not
+  interchangeable live-target scanners, so there is nothing to select among. The
+  one real within-phase axis delivered is **DAST depth** (passive/active),
+  planner-requested and operator-gated. Free-form model-authored scanner
+  args/commands, and multi-tool-per-phase selection, stay deferred.
 - **`scan` container egress gates only the seed** (inherited from `aegis scan`):
   a scanner that spiders paths/ports or follows redirects is not re-checked per
   request. Scope `agent`/`scan` engagements at host granularity. `attempt`
@@ -133,8 +163,10 @@ Claude-like shell.
 
 ## Deferred (named follow-ups)
 
-- LLM-planned, goal-adaptive **tool choice** within a phase (phase *selection*
-  is done — milestone 24).
+- Within-phase **tool selection** (1:1 today — a seam, no alternative live tools
+  per phase) and free-form model-authored scanner args/commands. Phase
+  *selection* is done (milestone 24); DAST *depth* is now goal-adaptive
+  (milestone 25).
 - `start()/step()/finalize()` engine refactor for within-turn pause/resume
   (shared with the shell's deferred item).
 - Per-request scope-enforcing egress proxy for scanner containers.
