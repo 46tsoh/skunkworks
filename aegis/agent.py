@@ -105,6 +105,7 @@ class AgentOutcome:
     decisions: int = 0
     cache_hits: int = 0
     all_refused: bool = False
+    dast_active: bool = False  # did the dast phase run ZAP's ACTIVE scan (attack payloads)?
 
     def as_dict(self) -> dict:
         return {
@@ -114,6 +115,7 @@ class AgentOutcome:
             "exploit_ran": self.exploit_ran,
             "verified": sum(1 for a in self.attempted if a.get("verified")),
             "degraded": self.degraded, "all_refused": self.all_refused,
+            "dast_active": self.dast_active,
         }
 
 
@@ -135,24 +137,37 @@ def drive_agent(
     transport=None,
     phases=DEFAULT_PHASES,
     confirm: Optional[Callable[[], str]] = None,
+    active_dast: bool = False,
 ) -> AgentOutcome:
     """Run the autonomous engagement to completion (minus the gated exploit).
 
     ``confirm`` (interactive only) is called at the confirm-to-exploit gate; it
     returns the operator's typed line (``go`` proceeds). Headless callers pass
     ``exploit=True`` to skip the prompt, or leave it ``False`` to stop at the gate.
+
+    ``active_dast`` is the **operator ceiling** for DAST depth: ZAP's active scan
+    sends attack payloads, so (like ``exploit``) it defaults ``False`` and is set
+    only by an explicit operator flag. A configured planner may then *request*
+    active for the dast phase, adapted to the goal; the request is capped by this
+    ceiling (see :func:`aegis.llm.clamp_depth`). The planner never receives it.
     """
     seen_keys: set = set()
     outcome = AgentOutcome(live=authorized)
 
-    # Honest disclosure: under an LLM mode with nothing configured, build_llm
-    # returns the deterministic TemplateLLM stub — the transcript looks agentic
-    # but is not model-driven. Say so once, where the operator sees it.
+    # Resolve the generative planner once. Under an LLM mode with nothing
+    # configured, build_llm returns the deterministic TemplateLLM stub — the
+    # transcript looks agentic but is not model-driven, and it never plans
+    # phases. Disclose that once; leave planner=None so phase selection stays
+    # the fixed DEFAULT_PHASES order.
+    planner = None
     if config.uses_planner:
         from aegis.llm import TemplateLLM, build_llm
-        if isinstance(build_llm(local_only=config.local_only), TemplateLLM):
+        cand = build_llm(local_only=config.local_only)
+        if isinstance(cand, TemplateLLM):
             write("  planner: TemplateLLM stub (no AEGIS_LLM* configured) — "
                   "reasoning is templated, not model-driven.")
+        else:
+            planner = cand
 
     def _narrate_into(kb_, pool_):
         cmd_kb, router = run_narration(pool_, config, sink, goal)
@@ -163,7 +178,38 @@ def drive_agent(
 
     # 1. SCAN — chain the live scanners, each gated, each triaged into the KB.
     if authorized:
-        for phase in phases:
+        # A real planner may choose an ordered SUBSET of the fixed allowed phase
+        # set, adapted to the goal. `phases` (DEFAULT_PHASES) is the TRUSTED set
+        # and the ONLY source `clamp_phases` draws from — exactly like `attempt`'s
+        # weakness type being clamped to the technique set. A hostile goal can
+        # never add a phase, change the target, or flip authorization. The
+        # planner never receives `scope`/`authorized`. (The subset guarantee is
+        # only as strong as this trusted set: a future caller must never pass a
+        # planner-derived value as `phases`.)
+        run_phases = tuple(phases)
+        if planner is not None:
+            from aegis.llm import plan_phases
+            run_phases = plan_phases(planner, goal, phases)
+            write(f"  planner selected phases: {' → '.join(run_phases)} "
+                  f"(allowed: {' → '.join(phases)}).")
+        # DAST depth (M25): the one goal-adaptive within-phase axis. ZAP's active
+        # scan sends attack payloads, so it is operator-gated (`active_dast`, the
+        # ceiling) AND planner-requested — never the planner's sole initiative.
+        # `clamp_depth` draws from {active, passive} and caps the request under the
+        # ceiling; the planner receives only `goal`, never `active_dast`/scope/auth.
+        dast_active = False
+        if planner is not None and active_dast and "dast" in run_phases:
+            from aegis.llm import plan_depth
+            dast_active = plan_depth(planner, goal, active_allowed=active_dast)
+            write(f"  dast depth: "
+                  f"{'active (attack payloads)' if dast_active else 'passive baseline'} "
+                  f"(operator-permitted; planner-selected for the goal).")
+        elif active_dast and planner is None and "dast" in run_phases:
+            write("  --active-dast ignored: no generative planner configured "
+                  "(static/TemplateLLM) — dast runs PASSIVE. Point AEGIS_LLM* at a "
+                  "local model under --mode full-llm|llm+decision for goal-adaptive "
+                  "active DAST.")
+        for phase in run_phases:
             ptarget = phase_target(phase, target)
             ok, reason = authorize(scope, authorized, ptarget)
             if not ok:
@@ -171,25 +217,40 @@ def drive_agent(
                           target=sanitize_text(ptarget, 160), reason=reason)
                 write(f"  [{phase}] REFUSED — {reason}")
                 outcome.phases.append({"phase": phase, "target": ptarget,
-                                       "status": "refused", "candidates": 0})
+                                       "status": "refused", "candidates": 0,
+                                       "depth": None})
                 continue
             if Path(ptarget).exists():  # same local-path refusal as `scan`
                 write(f"  [{phase}] refusing: {ptarget!r} is a local path")
                 outcome.phases.append({"phase": phase, "target": ptarget,
-                                       "status": "refused_local", "candidates": 0})
+                                       "status": "refused_local", "candidates": 0,
+                                       "depth": None})
                 continue
-            cands = _run_scanner(phase, ptarget, registry, write)
+            # TRIPLE GATE, independent of plan_depth's internals: planner chose
+            # active AND operator permitted AND it is the dast phase. recon/web
+            # can never receive active=True.
+            active_this = dast_active and active_dast and phase == "dast"
+            if phase == "dast":
+                # Truthful audit: ZAP's active scanner may send attack payloads
+                # before it errors/times out, so record that active ran BEFORE
+                # the call and regardless of its result — never under-report
+                # attack traffic in the machine-readable field.
+                outcome.dast_active = active_this
+            depth = ("active" if active_this else "passive") if phase == "dast" else None
+            cands = _run_scanner(phase, ptarget, registry, write, active=active_this)
             if cands is None:
                 outcome.degraded = True
                 outcome.phases.append({"phase": phase, "target": ptarget,
-                                       "status": "error", "candidates": 0})
+                                       "status": "error", "candidates": 0,
+                                       "depth": depth})
                 continue
             outcome.n_candidates += len(cands)
             write(f"  [{phase}] {ptarget} → {len(cands)} candidate(s); triaging…")
             if cands:
                 _narrate_into(kb, cands)
             outcome.phases.append({"phase": phase, "target": ptarget,
-                                   "status": "ok", "candidates": len(cands)})
+                                   "status": "ok", "candidates": len(cands),
+                                   "depth": depth})
         outcome.all_refused = bool(outcome.phases) and all(
             p["status"] in ("refused", "refused_local") for p in outcome.phases)
     else:
@@ -261,8 +322,13 @@ def drive_agent(
     return outcome
 
 
-def _run_scanner(phase: str, target: str, registry, write):
-    """Run one live Docker scanner; return its candidates, or None on failure."""
+def _run_scanner(phase: str, target: str, registry, write, *, active: bool = False):
+    """Run one live Docker scanner; return its candidates, or None on failure.
+
+    ``active`` selects ZAP's active (attack-payload) scan for the dast phase; it
+    is honored only by the dast adapter's ``argv`` (recon/web ignore it via
+    ``**opts``). Default ``False`` is byte-for-byte today's passive baseline.
+    """
     try:
         from aegis.tools import default_registry
         from aegis.tools.base import DockerBackedTool
@@ -279,7 +345,8 @@ def _run_scanner(phase: str, target: str, registry, write):
             tool, "allows_network", False):
         write(f"  [{phase}] not a live network scanner (image not pulled?)")
         return None
-    result = tool.run(target, network="bridge", host=target, url=target)
+    result = tool.run(target, network="bridge", host=target, url=target,
+                      active=active)
     if not result.ok:
         for e in result.errors:
             write(f"  [{phase}] ! {sanitize_text(str(e), 160)}")
