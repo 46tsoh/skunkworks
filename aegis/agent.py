@@ -230,23 +230,27 @@ def drive_agent(
             # active AND operator permitted AND it is the dast phase. recon/web
             # can never receive active=True.
             active_this = dast_active and active_dast and phase == "dast"
+            if phase == "dast":
+                # Truthful audit: ZAP's active scanner may send attack payloads
+                # before it errors/times out, so record that active ran BEFORE
+                # the call and regardless of its result — never under-report
+                # attack traffic in the machine-readable field.
+                outcome.dast_active = active_this
+            depth = ("active" if active_this else "passive") if phase == "dast" else None
             cands = _run_scanner(phase, ptarget, registry, write, active=active_this)
             if cands is None:
                 outcome.degraded = True
                 outcome.phases.append({"phase": phase, "target": ptarget,
                                        "status": "error", "candidates": 0,
-                                       "depth": None})
+                                       "depth": depth})
                 continue
             outcome.n_candidates += len(cands)
             write(f"  [{phase}] {ptarget} → {len(cands)} candidate(s); triaging…")
             if cands:
                 _narrate_into(kb, cands)
-            if phase == "dast":
-                outcome.dast_active = active_this
             outcome.phases.append({"phase": phase, "target": ptarget,
                                    "status": "ok", "candidates": len(cands),
-                                   "depth": ("active" if active_this else "passive")
-                                            if phase == "dast" else None})
+                                   "depth": depth})
         outcome.all_refused = bool(outcome.phases) and all(
             p["status"] in ("refused", "refused_local") for p in outcome.phases)
     else:

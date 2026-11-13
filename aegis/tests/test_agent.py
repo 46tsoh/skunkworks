@@ -634,6 +634,42 @@ def test_depth_planner_passive_within_permission(monkeypatch):
     assert dast["depth"] == "passive"
 
 
+def test_depth_active_recorded_even_when_scanner_errors(monkeypatch):
+    """Audit truthfulness: ZAP's active scanner may send attack payloads before
+    it errors/times out, so dast_active (and the dast phase depth) must record
+    active=True even when the dast run returns an error — never under-report
+    attack traffic in the machine-readable fields."""
+    monkeypatch.setattr("aegis.llm.build_llm",
+                        lambda **kw: _DepthPlanProvider("active"))
+
+    class _ErroringDastScanner(DockerBackedTool):
+        allows_network = True
+
+        def __init__(self, name):
+            self.name = name
+
+        def run(self, target, **kw):
+            if self.name == "dast":            # active scan launched, then errored
+                return ToolResult(self.name, ToolStatus.ERROR, candidates=[],
+                                  errors=["scan timed out"])
+            cand = make_candidate(
+                id=f"{self.name}-1", title="x", cwe="CWE-200",
+                component="http://good.htb/x", severity="low",
+                source_engine="dynamic", tool=self.name)
+            return ToolResult(self.name, ToolStatus.OK, candidates=[cand])
+
+    kb = KnowledgeBase()
+    outcome = drive_agent(
+        target="http://good.htb/", goal="exercise injection", scope=_scope(),
+        authorized=True, exploit=False, config=_planner_cfg(),
+        sink=EventSink(path=None), kb=kb, write=[].append,
+        registry=_Registry(_ErroringDastScanner), active_dast=True)
+    assert outcome.dast_active is True       # recorded despite the error
+    assert outcome.degraded is True
+    dast = [p for p in outcome.phases if p["phase"] == "dast"][0]
+    assert dast["status"] == "error" and dast["depth"] == "active"
+
+
 def test_depth_gating_out_of_scope_no_traffic(monkeypatch):
     """Invariant 1: --active-dast never bypasses authorize() — an out-of-scope
     target refuses every phase, the scanner is never run, dast_active stays False."""
