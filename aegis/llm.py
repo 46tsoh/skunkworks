@@ -247,6 +247,93 @@ def plan_next_action(
         return 0, ""
 
 
+def clamp_phases(proposed: object, allowed: Sequence[str]) -> "tuple[str, ...]":
+    """Clamp an arbitrary planner proposal to an ordered SUBSET of ``allowed``.
+
+    Pure, no I/O. **Every element of the result is an element of ``allowed``**
+    (drawn from ``allowed``, never from ``proposed``): a planner token is only
+    ever a case-folded lookup key or an integer index into ``allowed``. A
+    degenerate or hostile proposal therefore cannot introduce a phase; at worst
+    it yields the full ``allowed`` tuple in canonical order. ``allowed`` must be
+    distinct lowercase phase-name strings (i.e. ``DEFAULT_PHASES``).
+
+    This is the sole trust boundary for LLM-planned phase selection: the same
+    clamp discipline as the red-team ``attempt`` weakness type being clamped to
+    the technique set. Because the output vocabulary is only "which trusted
+    names, in what order", it has no ``target`` / ``scope`` / ``authorized`` in
+    scope and can never add a phase, change the target, or flip authorization.
+    """
+    allowed = tuple(allowed)
+    if not allowed:
+        return ()
+    # canonical lowercase name -> the TRUSTED canonical string FROM `allowed`.
+    lut = {p.lower(): p for p in allowed}
+    # A bare string / bytes / None is ambiguous input; never char-iterate it
+    # (so "recondast" can't smuggle characters in as items).
+    if proposed is None or isinstance(proposed, (str, bytes)):
+        items: list = []
+    else:
+        try:
+            items = list(proposed)
+        except TypeError:
+            items = []  # a non-iterable scalar (e.g. an int / float)
+    out: list = []
+    seen: set = set()
+    for item in items:
+        if isinstance(item, bool):
+            phase = None  # bool is an int subclass: reject True/False as indices
+        elif isinstance(item, int):
+            phase = allowed[item] if 0 <= item < len(allowed) else None
+        elif isinstance(item, str):
+            phase = lut.get(item.strip().lower())
+        else:
+            phase = None
+        if phase is not None and phase not in seen:
+            seen.add(phase)
+            out.append(phase)
+    return tuple(out) or allowed  # degenerate -> full canonical order
+
+
+def plan_phases(
+    provider: LLMProvider, goal: str, allowed: Sequence[str]
+) -> "tuple[str, ...]":
+    """The 'LLM plans' half for phase selection: pick which of ``allowed`` to
+    run, and in what order, for ``goal``.
+
+    One generative call, then :func:`clamp_phases`. Any failure (network →
+    :class:`LLMError`, no JSON object, a bad / empty / non-list ``phases``)
+    returns the full ``allowed`` tuple — today's fixed order — so the agent is
+    never left with an empty or out-of-set engagement. ``goal`` is embedded
+    strictly as data; the clamp is the trust boundary regardless of what it says.
+    """
+    allowed = tuple(allowed)
+    if not allowed:
+        return ()
+    numbered = "\n".join(f"{i}: {p}" for i, p in enumerate(allowed))
+    prompt = (
+        "You are the coordinator planning a defensive security test of an "
+        "authorized target. Choose which scan phases to run, and in what order, "
+        "to pursue the goal efficiently. You may run all of them, a subset, or "
+        "reorder them. Do not invent phases: choose only from the list below.\n\n"
+        f"Goal: {goal}\n\n"
+        f"Allowed phases (choose only from these):\n{numbered}\n\n"
+        'Reply ONLY as JSON: {"phases": ["<name>", ...]} listing the chosen '
+        "phase names in the order to run them."
+    )
+    try:
+        text = provider.complete(prompt)
+        lo, hi = text.find("{"), text.rfind("}")
+        if lo == -1 or hi == -1:
+            return clamp_phases((), allowed)  # -> allowed (full order)
+        data = json.loads(text[lo:hi + 1])
+        proposed = data.get("phases", [])
+        if not isinstance(proposed, list):  # e.g. {"phases": "recon"}
+            proposed = []
+        return clamp_phases(proposed, allowed)
+    except (LLMError, ValueError, KeyError, TypeError):
+        return clamp_phases((), allowed)  # -> allowed (full order)
+
+
 def agent_turn(
     provider: LLMProvider, role: str, task: str, state: str,
     options: Sequence[str]
@@ -308,4 +395,5 @@ __all__ = [
     "LLMProvider", "LLMError", "TemplateLLM", "OpenAICompatProvider",
     "build_llm", "judge_backend", "summarize", "plan_next_action",
     "agent_turn", "explain_finding", "is_local_base",
+    "clamp_phases", "plan_phases",
 ]

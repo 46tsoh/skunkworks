@@ -145,14 +145,20 @@ def drive_agent(
     seen_keys: set = set()
     outcome = AgentOutcome(live=authorized)
 
-    # Honest disclosure: under an LLM mode with nothing configured, build_llm
-    # returns the deterministic TemplateLLM stub — the transcript looks agentic
-    # but is not model-driven. Say so once, where the operator sees it.
+    # Resolve the generative planner once. Under an LLM mode with nothing
+    # configured, build_llm returns the deterministic TemplateLLM stub — the
+    # transcript looks agentic but is not model-driven, and it never plans
+    # phases. Disclose that once; leave planner=None so phase selection stays
+    # the fixed DEFAULT_PHASES order.
+    planner = None
     if config.uses_planner:
         from aegis.llm import TemplateLLM, build_llm
-        if isinstance(build_llm(local_only=config.local_only), TemplateLLM):
+        cand = build_llm(local_only=config.local_only)
+        if isinstance(cand, TemplateLLM):
             write("  planner: TemplateLLM stub (no AEGIS_LLM* configured) — "
                   "reasoning is templated, not model-driven.")
+        else:
+            planner = cand
 
     def _narrate_into(kb_, pool_):
         cmd_kb, router = run_narration(pool_, config, sink, goal)
@@ -163,7 +169,21 @@ def drive_agent(
 
     # 1. SCAN — chain the live scanners, each gated, each triaged into the KB.
     if authorized:
-        for phase in phases:
+        # A real planner may choose an ordered SUBSET of the fixed allowed phase
+        # set, adapted to the goal. `phases` (DEFAULT_PHASES) is the TRUSTED set
+        # and the ONLY source `clamp_phases` draws from — exactly like `attempt`'s
+        # weakness type being clamped to the technique set. A hostile goal can
+        # never add a phase, change the target, or flip authorization. The
+        # planner never receives `scope`/`authorized`. (The subset guarantee is
+        # only as strong as this trusted set: a future caller must never pass a
+        # planner-derived value as `phases`.)
+        run_phases = tuple(phases)
+        if planner is not None:
+            from aegis.llm import plan_phases
+            run_phases = plan_phases(planner, goal, phases)
+            write(f"  planner selected phases: {' → '.join(run_phases)} "
+                  f"(allowed: {' → '.join(phases)}).")
+        for phase in run_phases:
             ptarget = phase_target(phase, target)
             ok, reason = authorize(scope, authorized, ptarget)
             if not ok:

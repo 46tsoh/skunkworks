@@ -11,8 +11,11 @@ import json
 import pytest
 
 from aegis import cli
-from aegis.agent import AgentOutcome, attemptable, drive_agent, phase_target
+from aegis.agent import (
+    DEFAULT_PHASES, AgentOutcome, attemptable, drive_agent, phase_target,
+)
 from aegis.config import AegisConfig
+from aegis.llm import LLMError, TemplateLLM, clamp_phases, plan_phases
 from aegis.engines.events import EventSink
 from aegis.knowledge.base import KnowledgeBase
 from aegis.redteam import EngagementScope
@@ -246,3 +249,170 @@ def test_cli_exploit_without_authorized_refuses(capsys):
     rc = cli.main(["agent", "x", "--target", "good.htb", "--exploit"])
     assert rc == 2
     assert "requires --authorized" in capsys.readouterr().err
+
+
+# ===========================================================================
+# LLM-planned, goal-adaptive phase selection (milestone 24).
+#
+# The planner may prune/reorder the FIXED allowed phase set; `clamp_phases` is
+# the sole trust boundary (every chosen phase is drawn FROM the trusted set, so
+# a hostile goal can never add a phase, change the target, or flip auth). All
+# fully offline: no sockets, no model.
+# ===========================================================================
+class _PhasePlanProvider:
+    """A fake *real* planner (NOT a TemplateLLM subclass, so drive_agent treats
+    it as a configured model). It returns a fixed ``{"phases": [...]}`` for the
+    phase-plan prompt and delegates every other prompt to ``TemplateLLM`` so the
+    triage router / narration stay deterministic offline."""
+
+    name = "fake-phase-planner"
+
+    def __init__(self, phases):
+        self._phases = phases
+        self._t = TemplateLLM()
+
+    def complete(self, prompt):
+        if '"phases"' in prompt:           # uniquely the phase-plan prompt
+            return json.dumps({"phases": self._phases})
+        return self._t.complete(prompt)    # decisions/narration: deterministic
+
+    def chat(self, messages):
+        return self.complete("\n".join(m.get("content", "") for m in messages))
+
+
+def _planner_cfg():
+    return AegisConfig.from_env(mode="full-llm", local_only=True)
+
+
+# -- clamp_phases: the trust boundary -----------------------------------------
+@pytest.mark.parametrize("proposed,expected", [
+    (["web", "recon"], ("web", "recon")),                 # subset + reorder
+    (["recon"], ("recon",)),                              # prune to one
+    (["rm-rf", "recon", "internal.evil", "dast"],         # drop unknown, keep valid
+     ("recon", "dast")),
+    (["x", "y"], DEFAULT_PHASES),                          # all-unknown -> fallback
+    ([], DEFAULT_PHASES),                                 # empty -> fallback
+    (["web", "web", "recon"], ("web", "recon")),          # dedupe first-wins
+    ([" WEB ", "Recon"], ("web", "recon")),               # case / whitespace
+    ([2, 0], ("dast", "recon")),                          # integer indices
+    ([99, 0], ("recon",)),                                # out-of-range dropped
+    ([True], DEFAULT_PHASES),                             # bool is not index 1
+    ([None, "web"], ("web",)),                            # None dropped
+    (["recon; rm -rf /", "web"], ("web",)),               # injection token dropped
+    ("recondast", DEFAULT_PHASES),                        # bare string not char-iterated
+    (5, DEFAULT_PHASES),                                  # non-iterable scalar
+    (None, DEFAULT_PHASES),                               # None proposal
+])
+def test_clamp_phases_table(proposed, expected):
+    assert clamp_phases(proposed, DEFAULT_PHASES) == expected
+
+
+def test_clamp_phases_is_always_subset():
+    """Property: whatever the proposal, the result is a non-empty, duplicate-free
+    ordered subset of the trusted allowed set — never an injected phase."""
+    allowed = set(DEFAULT_PHASES)
+    cases = [
+        ["recon", 1, True, None, "evil", "DAST", 2, "recon"],
+        [object(), 7, -1, "web; drop", b"recon"],
+        [[], {}, "RECON ", 0],
+        ["totally", "unknown", "names"],
+    ]
+    for proposed in cases:
+        out = clamp_phases(proposed, DEFAULT_PHASES)
+        assert set(out) <= allowed
+        assert len(out) >= 1
+        assert len(out) == len(set(out))
+
+
+def test_clamp_phases_empty_allowed():
+    assert clamp_phases(["recon"], []) == ()
+
+
+# -- plan_phases: one generative call, then clamp, fail-closed to full order --
+def test_plan_phases_happy_path():
+    prov = _PhasePlanProvider(["web", "recon"])
+    assert plan_phases(prov, "find xss", DEFAULT_PHASES) == ("web", "recon")
+
+
+def test_plan_phases_injection_is_clamped():
+    prov = _PhasePlanProvider(["recon", "evilphase", "internal.evil", "web"])
+    assert plan_phases(prov, "hostile goal", DEFAULT_PHASES) == ("recon", "web")
+
+
+def test_plan_phases_non_json_falls_back():
+    class _Chatty:
+        name = "chatty"
+        def complete(self, prompt): return "sure, I'll run all phases!"
+        def chat(self, m): return self.complete("")
+    assert plan_phases(_Chatty(), "x", DEFAULT_PHASES) == DEFAULT_PHASES
+
+
+def test_plan_phases_llmerror_falls_back():
+    class _Broken:
+        name = "broken"
+        def complete(self, prompt): raise LLMError("down")
+        def chat(self, m): return self.complete("")
+    assert plan_phases(_Broken(), "x", DEFAULT_PHASES) == DEFAULT_PHASES
+
+
+def test_plan_phases_string_phases_falls_back():
+    class _StringPhases:
+        name = "sp"
+        def complete(self, prompt): return json.dumps({"phases": "recon"})
+        def chat(self, m): return self.complete("")
+    # non-list "phases" -> treated as empty -> full canonical order
+    assert plan_phases(_StringPhases(), "x", DEFAULT_PHASES) == DEFAULT_PHASES
+
+
+# -- drive_agent with a real planner (invariants end-to-end) ------------------
+def _drive_with_planner(phases_returned, *, target="http://good.htb/",
+                        scope=None, monkeypatch=None):
+    monkeypatch.setattr("aegis.llm.build_llm",
+                        lambda **kw: _PhasePlanProvider(phases_returned))
+    kb = KnowledgeBase()
+    lines = []
+    outcome = drive_agent(
+        target=target, goal="find sqli", scope=scope or _scope(),
+        authorized=True, exploit=False, config=_planner_cfg(),
+        sink=EventSink(path=None), kb=kb, write=lines.append,
+        registry=_Registry(_SqliScanner))
+    return outcome, lines
+
+
+def test_static_mode_runs_fixed_order_regression():
+    """Invariant 3: with no planner (static mode), the full fixed order runs —
+    unchanged from before milestone 24."""
+    outcome, _lines, _kb = _drive(authorized=True, exploit=False)
+    assert [p["phase"] for p in outcome.phases] == ["recon", "web", "dast"]
+
+
+def test_agent_planner_prunes_phases(monkeypatch):
+    outcome, lines = _drive_with_planner(["recon"], monkeypatch=monkeypatch)
+    assert [p["phase"] for p in outcome.phases] == ["recon"]
+    assert any("planner selected phases" in ln for ln in lines)
+
+
+def test_agent_planner_reorders_phases(monkeypatch):
+    outcome, _ = _drive_with_planner(["dast", "web"], monkeypatch=monkeypatch)
+    assert [p["phase"] for p in outcome.phases] == ["dast", "web"]
+
+
+def test_agent_planner_cannot_inject_a_phase(monkeypatch):
+    """Invariant 2: a planner that names a phase outside DEFAULT_PHASES cannot
+    introduce it — the clamp drops it, and the gated target for each surviving
+    phase is still derived from the driver's --target, never from the planner."""
+    outcome, _ = _drive_with_planner(
+        ["recon", "evilphase", "web"], monkeypatch=monkeypatch)
+    assert [p["phase"] for p in outcome.phases] == ["recon", "web"]
+    for p in outcome.phases:
+        assert p["target"] == phase_target(p["phase"], "http://good.htb/")
+
+
+def test_agent_planner_reorder_still_gated(monkeypatch):
+    """Invariant 1: reordering never bypasses authorize() — an out-of-scope
+    target refuses every (reordered) phase before any traffic."""
+    outcome, _ = _drive_with_planner(
+        ["dast", "recon", "web"], target="http://evil.example/",
+        monkeypatch=monkeypatch)
+    assert [p["phase"] for p in outcome.phases] == ["dast", "recon", "web"]
+    assert all(p["status"] == "refused" for p in outcome.phases)
