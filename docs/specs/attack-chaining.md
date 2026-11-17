@@ -4,13 +4,45 @@
 engine stages 1–3 (`docs/specs/red-team-engine.md`) and the autonomous agent
 (`docs/specs/autonomous-agent.md`, milestones 23–25).*
 
-Status: **design**. This spec is the short design the STATUS follow-up asks for
-before building: *"the agent actively chains attacks … offensive capability with
-real safety weight; warrants a short design on scope + authorization model."*
-It composes chaining on top of the existing read-only stage-1/2/3 primitives and
-the M24/M25 clamp discipline. It adds **orchestration and typed artifact-passing,
-not new offensive reach**; the one genuinely new capability it names
-(authenticated re-triage) is explicitly **deferred to its own milestone**.
+Status: **M26 built** (the design below is implemented and tested; see
+"Implementation status" immediately after this paragraph). This spec was the
+short design the STATUS follow-up asked for before building: *"the agent
+actively chains attacks … offensive capability with real safety weight;
+warrants a short design on scope + authorization model."* It composes chaining
+on top of the existing read-only stage-1/2/3 primitives and the M24/M25 clamp
+discipline. It adds **orchestration and typed artifact-passing, not new
+offensive reach**; the one genuinely new capability it names (authenticated
+re-triage, the `credential` role) is explicitly **deferred to M27** and is
+*not* built here — the `credential` role is defined in the closed vocabulary but
+never minted or consumed.
+
+### Implementation status (milestone 26)
+
+**Built and tested** (`aegis/redteam/chain.py`, wired into `aegis/agent.py` +
+`aegis/cli.py`, offline/deterministic tests in
+`aegis/tests/test_redteam_chain.py`):
+
+* the chain data model — `Artifact` (closed `ARTIFACT_ROLES`; `meta` never
+  serialized), `ChainStep`, `ChainGraph` (`as_dict` → `report.json`
+  `metrics.agent.chain`), `ChainBudget`;
+* the `CHAIN_OPS` registry (`confirm`/`extract`/`pivot`/`retriage`, each with
+  `needs`/`produces`/`gate`; no destructive/write/exfil member);
+* the derivation clamp — `clamp_op` (stage opt-in first), `derive_targets` +
+  `match_trusted` (every derived target ∈ the frozen trusted set, never a body
+  value), `clamp_choice` (planner only orders the code-built frontier),
+  `build_trusted` (computed once from the frozen scope, never grows);
+* the bounded, monotone BFS driver `run_chain` — per-step re-authorization on the
+  exact target bytes, the re-feed of `engine.attempt`'s stage-2/3 output into
+  discrete `extract`/`pivot` nodes (no new traffic, no re-plumbing), the
+  promotion of a proven-reachable in-scope host to a re-triage → re-exploit node
+  (depth ≥ 2), the full-chain audit, and the `max_depth = 0` flat-loop
+  regression lock;
+* the one-beat gate (`--chain` requires `--authorized` + `--scope` + `--exploit`,
+  refused fail-closed with exit 2 before any traffic) and CLI budget flags.
+
+**Deferred (not built):** M27 authenticated re-triage (`credential`), M28 SQLi
+data-extraction / cross-path surface derivation, and everything under
+"Permanently excluded".
 
 ## 1. Why — the gap today
 
@@ -437,8 +469,8 @@ serialized to the planner, transcript, or report.
 
 ## 8. Milestone decomposition (honest scope)
 
-**M26 — the smallest genuinely-chaining, buildable now, zero new offensive
-reach.** The chain engine + `ChainGraph`/`Artifact`/`ChainStep`/`ChainBudget` +
+**M26 — DONE (built + tested). The smallest genuinely-chaining, buildable now,
+zero new offensive reach.** The chain engine + `ChainGraph`/`Artifact`/`ChainStep`/`ChainBudget` +
 `clamp_op`/`clamp_choice`/`derive_targets` + the bounded monotone frontier + the
 one-beat gate + the full audit, composing **only** `confirm → extract → pivot →
 re-triage/re-exploit-of-an-already-in-scope-target** over the existing read-only
