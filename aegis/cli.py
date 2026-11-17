@@ -512,6 +512,27 @@ def _cmd_agent(args: argparse.Namespace) -> int:
         print("refusing: --active-dast requires --scope (a named engagement file "
               "every active-scan phase is bounded by).", file=sys.stderr)
         return 2
+    # --chain (M26) sends exploit payloads across a multi-step tree: it needs the
+    # same beat as --exploit, plus --exploit itself (the one human confirm gate).
+    # Refuse fail-closed, before any traffic.
+    if args.chain and not args.authorized:
+        print("refusing: --chain requires --authorized (the chain re-checks every "
+              "step, but you must assert you are permitted to test).",
+              file=sys.stderr)
+        return 2
+    if args.chain and args.scope is None:
+        print("refusing: --chain requires --scope (every chained step is checked "
+              "against the engagement file).", file=sys.stderr)
+        return 2
+    if args.chain and not args.exploit:
+        print("refusing: --chain requires --exploit (the single human confirm "
+              "gate before any payload; the chain is one bounded run behind it).",
+              file=sys.stderr)
+        return 2
+    if args.chain and args.chain_max_depth < 1:
+        print("refusing: --chain-max-depth must be >= 1 (0 is the flat loop; omit "
+              "--chain for that).", file=sys.stderr)
+        return 2
     if args.scope is not None:
         try:
             scope = load_scope(args.scope)
@@ -545,11 +566,20 @@ def _cmd_agent(args: argparse.Namespace) -> int:
     sink.on_emit = _make_renderer(write)
     kb = KnowledgeBase()
     started = _time.time()
+    chain_budget = None
+    if args.chain:
+        from aegis.redteam.chain import ChainBudget
+        deadline = (_time.monotonic() + args.chain_deadline
+                    if args.chain_deadline else None)
+        chain_budget = ChainBudget(
+            max_depth=args.chain_max_depth, max_breadth=args.chain_max_breadth,
+            max_steps=args.chain_max_steps, max_requests=args.chain_max_requests,
+            deadline=deadline)
     outcome = drive_agent(
         target=args.target, goal=args.goal, scope=scope,
         authorized=bool(args.authorized), exploit=bool(args.exploit),
         config=aegis_cfg, sink=sink, kb=kb, write=write,
-        active_dast=bool(args.active_dast))
+        active_dast=bool(args.active_dast), chain=chain_budget)
 
     if args.out:
         write_report(args.out, kb, sink, None, run_id=args.run_id or "agent",
@@ -760,6 +790,24 @@ def build_parser() -> argparse.ArgumentParser:
                               "planner selects it for the goal; default is the "
                               "passive baseline. Attack traffic — requires "
                               "--authorized and --scope, like --exploit")
+    agent_p.add_argument("--chain", action="store_true",
+                         help="compose confirmed leads into a bounded attack "
+                              "tree (M26): a cmdi foothold unlocks extract/pivot, "
+                              "a proven-reachable in-scope host is re-triaged and "
+                              "re-exploited (depth >= 2). Every step stays "
+                              "triple-gated; scope never auto-expands. Requires "
+                              "--authorized, --scope and --exploit (the one "
+                              "confirm gate)")
+    agent_p.add_argument("--chain-max-depth", type=int, default=3,
+                         help="chain depth bound (>=1 with --chain; default 3)")
+    agent_p.add_argument("--chain-max-breadth", type=int, default=4,
+                         help="children promoted per node (default 4)")
+    agent_p.add_argument("--chain-max-steps", type=int, default=16,
+                         help="total chain nodes; excess logged 'capped' (default 16)")
+    agent_p.add_argument("--chain-max-requests", type=int, default=512,
+                         help="hard anti-DoS wall, summed across steps (default 512)")
+    agent_p.add_argument("--chain-deadline", type=float, default=None,
+                         help="wall-clock seconds for the whole chain (optional)")
     agent_p.add_argument("--mode",
                          choices=["full-llm", "llm+decision", "static"],
                          default=None, help="operating mode (overrides --backend)")

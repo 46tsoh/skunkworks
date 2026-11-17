@@ -106,9 +106,10 @@ class AgentOutcome:
     cache_hits: int = 0
     all_refused: bool = False
     dast_active: bool = False  # did the dast phase run ZAP's ACTIVE scan (attack payloads)?
+    chain: Optional[dict] = None  # ChainGraph.as_dict() when --chain ran (M26)
 
     def as_dict(self) -> dict:
-        return {
+        d = {
             "live": self.live, "phases": self.phases, "findings": self.findings,
             "exploitable_leads": self.exploitable_leads,
             "skipped_leads": self.skipped_leads, "attempted": self.attempted,
@@ -117,6 +118,9 @@ class AgentOutcome:
             "degraded": self.degraded, "all_refused": self.all_refused,
             "dast_active": self.dast_active,
         }
+        if self.chain is not None:
+            d["chain"] = self.chain
+        return d
 
 
 # --------------------------------------------------------------------------- #
@@ -138,6 +142,7 @@ def drive_agent(
     phases=DEFAULT_PHASES,
     confirm: Optional[Callable[[], str]] = None,
     active_dast: bool = False,
+    chain=None,
 ) -> AgentOutcome:
     """Run the autonomous engagement to completion (minus the gated exploit).
 
@@ -150,6 +155,17 @@ def drive_agent(
     only by an explicit operator flag. A configured planner may then *request*
     active for the dast phase, adapted to the goal; the request is capped by this
     ceiling (see :func:`aegis.llm.clamp_depth`). The planner never receives it.
+
+    ``chain`` (milestone 26) is an optional :class:`aegis.redteam.chain.ChainBudget`.
+    When ``None`` (default, ``--chain`` absent) the exploit step is today's flat,
+    independent, one-shot confirm loop — unchanged. When set, the confirmed leads
+    seed a bounded attack tree (:func:`aegis.redteam.chain.run_chain`): a confirmed
+    cmdi foothold unlocks ``extract`` (flag/file) and ``pivot`` (in-scope hosts),
+    and a proven-reachable in-scope host is promoted to a node that can be
+    re-triaged and re-exploited (depth ≥ 2). Every chained step stays triple-gated;
+    scope never auto-expands. With ``max_depth == 0`` it is byte-for-byte the flat
+    loop (the regression lock, spec §9). The chain driver never receives the
+    planner's authorization state, exactly like the flat loop.
     """
     seen_keys: set = set()
     outcome = AgentOutcome(live=authorized)
@@ -305,6 +321,15 @@ def drive_agent(
                            on_event=lambda e: sink.emit(
                                "a0003", e.get("event", "event"),
                                **{k: v for k, v in e.items() if k != "event"}))
+
+    if chain is not None:
+        # Milestone 26 — compose the confirmed leads into a bounded attack tree.
+        # The chain driver re-authorizes on the EXACT per-step target bytes at
+        # every depth and never receives the planner; scope never auto-expands.
+        _run_chained_exploit(outcome, engine, scope, authorized, chain,
+                             registry, sink, write)
+        return outcome
+
     for lead in outcome.exploitable_leads:
         ok, reason = authorize(scope, authorized, lead["target"])
         if not ok:
@@ -320,6 +345,39 @@ def drive_agent(
                                   "cwe": res.cwe,
                                   "proof": sanitize_text(res.proof or "", 300)})
     return outcome
+
+
+def _run_chained_exploit(outcome, engine, scope, authorized, budget, registry,
+                         sink, write) -> None:
+    """Drive the M26 attack chain and fold its tree back into the outcome.
+
+    ``outcome.attempted`` is populated from the chain's ``confirm`` steps (all
+    depths) so the existing report fields (``verified`` count, per-lead proof)
+    keep working; the full tree lands in ``outcome.chain`` (→ ``report.json``
+    ``metrics.agent.chain``). ``scanner_fn`` re-runs the gated dast scanner for
+    ``retriage`` — the only live re-scan — reusing the same per-phase plumbing.
+    """
+    from aegis.redteam.chain import run_chain
+
+    def scanner_fn(t: str):
+        return _run_scanner("dast", _url_of(t), registry, write)
+
+    graph = run_chain(
+        scope=scope, authorized=authorized, engine=engine,
+        initial_leads=outcome.exploitable_leads, budget=budget,
+        scanner_fn=scanner_fn, sink=sink, write=write)
+    outcome.chain = graph.as_dict()
+    for sid in graph.nodes:
+        step = graph.nodes[sid]
+        if step.op != "confirm":
+            continue
+        outcome.attempted.append({
+            "type": step.kind, "target": step.target, "param": step.param,
+            "depth": step.depth,
+            "verified": step.status == "confirmed",
+            "cwe": (step.result or {}).get("cwe", ""),
+            "proof": sanitize_text(step.note or "", 300),
+        })
 
 
 def _run_scanner(phase: str, target: str, registry, write, *, active: bool = False):
