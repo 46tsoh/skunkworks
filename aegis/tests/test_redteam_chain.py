@@ -450,6 +450,43 @@ def test_hostile_planner_cannot_author_an_op_or_target():
     assert all(s.op in CHAIN_OPS for s in graph.nodes.values())
 
 
+def test_mutating_planner_cannot_crash_or_desync_the_tree():
+    """A planner that MUTATES what it is handed and returns garbage must not
+    crash run_chain or corrupt the audit: it receives only read-only dict views,
+    and selection is by a frozen id snapshot. Regression for the M26 review."""
+    scope, engine, scanner_fn, transport = _hostile_env()
+
+    class _Mutator:
+        def __call__(self, frontier):
+            # frontier is a list of dict VIEWS; mutate them aggressively.
+            for v in frontier:
+                try:
+                    v["id"] = "x-mutated"
+                    v["op"] = "exfil"
+                    v["target"] = "http://evil.com/"
+                except Exception:
+                    pass
+            return "x-mutated"   # the forged id must not resolve or crash remove()
+
+    graph = run_chain(scope=scope, authorized=True, engine=engine,
+                      initial_leads=[_lead("http://target.htb/ping?host=1")],
+                      budget=ChainBudget(max_depth=5, max_breadth=4,
+                                         max_steps=40, max_requests=512),
+                      scanner_fn=scanner_fn, planner=_Mutator())
+
+    # 1. the loop completed (frontier drained) — no uncaught crash.
+    assert graph.frontier == []
+    # 2. no node was authored by the planner: real code ids, real ops, no evil.
+    assert "evil.com" not in transport.sent_hosts
+    for sid, s in graph.nodes.items():
+        assert s.id == sid                       # key agrees with step id
+        assert s.op in CHAIN_OPS                 # no "exfil"
+        assert "evil.com" not in s.target
+    # 3. the audit tree still reconstructs: every edge references real nodes.
+    for parent, child in graph.edges:
+        assert parent in graph.nodes and child in graph.nodes
+
+
 def test_injected_shell_metachars_never_form_a_command():
     """A body carrying `; rm -rf /` / `$(curl evil)` appears only as
     sanitize_text'd DATA; there is no free-form command sink. And a flag path

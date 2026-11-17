@@ -435,7 +435,7 @@ def run_chain(
     scanner_fn: Optional[Callable[[str], Optional[list]]] = None,
     authorize_fn: Optional[Callable[[EngagementScope, bool, str],
                                     "tuple[bool, str]"]] = None,
-    planner: Optional[Callable[[List[ChainStep]], object]] = None,
+    planner: Optional[Callable[[List[dict]], object]] = None,
     sink=None,
     write: Optional[Callable[[str], None]] = None,
     now_fn: Callable[[], float] = time.monotonic,
@@ -520,17 +520,23 @@ def run_chain(
             break
 
         # Planner (if any) ORDERS the frontier; offline it is strict BFS (pop 0).
-        pending = [graph.nodes[i] for i in graph.frontier]
-        chosen = None
+        # The planner sees only READ-ONLY dict views (never the live ChainStep
+        # objects) and we select against a frozen id snapshot, so a mutating or
+        # crashing planner can neither author/alter a step, desync the audit
+        # tree, nor crash the loop — it can only reorder already-vetted options.
+        frontier_ids = list(graph.frontier)           # frozen id snapshot
+        pending = [graph.nodes[i] for i in frontier_ids]
+        chosen_idx = 0
         if planner is not None:
             try:
-                chosen = clamp_choice(planner(list(pending)), pending)
+                sel = clamp_choice(planner([s.as_dict() for s in pending]), pending)
+                if sel is not None:
+                    chosen_idx = pending.index(sel)
             except Exception:  # noqa: BLE001 — a planner must never crash the loop
-                chosen = None
-        if chosen is None:
-            chosen = pending[0]
-        graph.frontier.remove(chosen.id)
-        step = chosen
+                chosen_idx = 0
+        chosen_id = frontier_ids[chosen_idx]
+        graph.frontier.remove(chosen_id)
+        step = graph.nodes[chosen_id]
 
         _emit("chain_node_open", step=step.id, op=step.op, depth=step.depth,
               target=sanitize_text(step.target, 160))
