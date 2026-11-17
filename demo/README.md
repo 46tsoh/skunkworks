@@ -6,6 +6,12 @@ Google Fonts; no build step, no bundler, no network calls back to any service).
 
 ## `aegis-tour.html`
 
+![Animated tour of Aegis](aegis-tour.gif)
+
+> `aegis-tour.gif` is a recording of the page (GitHub renders HTML as source, so
+> the GIF is how the animation shows up in the repo). Open the `.html` for the
+> real, interactive, theme-aware page.
+
 An animated one-page tour:
 
 - **The operating split** — the LLM writes & plans, a typed decision model
