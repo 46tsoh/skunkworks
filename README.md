@@ -14,6 +14,23 @@ dashboard.
 > localhost (`basal`); the remote `jev` backend is refused unless egress is
 > explicitly enabled.
 
+## Demo
+
+A self-contained animated tour of the framework — the operating split, the
+`recon → web → dast → triage → rank → confirm` pipeline, the two engines, the
+sample findings, the autonomous agent, and the safety clamp:
+
+[![Animated tour of Aegis](demo/aegis-tour.gif)](demo/aegis-tour.html)
+
+- **View it live** (interactive, once GitHub Pages is enabled for this repo —
+  Settings → Pages → Source: GitHub Actions): <https://46tsoh.github.io/skunkworks/aegis-tour.html>
+- **Or right now, no setup:** open it through the raw-HTML previewer —
+  <https://htmlpreview.github.io/?https://github.com/46tsoh/skunkworks/blob/main/demo/aegis-tour.html>
+- **Source:** [`demo/aegis-tour.html`](demo/aegis-tour.html) (open locally with any browser).
+
+> GitHub shows the `.html` file as source, not a running page; the GIF above is
+> a recording of it. The figures are the bundled sample run, not a live scan.
+
 ## Quick start
 
 ```bash
