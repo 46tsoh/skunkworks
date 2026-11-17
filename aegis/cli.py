@@ -504,6 +504,14 @@ def _cmd_agent(args: argparse.Namespace) -> int:
         print("refusing: --exploit requires --scope (an engagement file every "
               "attempt is checked against).", file=sys.stderr)
         return 2
+    if args.active_dast and not args.authorized:
+        print("refusing: --active-dast permits sending attack payloads; it "
+              "requires --authorized.", file=sys.stderr)
+        return 2
+    if args.active_dast and args.scope is None:
+        print("refusing: --active-dast requires --scope (a named engagement file "
+              "every active-scan phase is bounded by).", file=sys.stderr)
+        return 2
     if args.scope is not None:
         try:
             scope = load_scope(args.scope)
@@ -540,7 +548,8 @@ def _cmd_agent(args: argparse.Namespace) -> int:
     outcome = drive_agent(
         target=args.target, goal=args.goal, scope=scope,
         authorized=bool(args.authorized), exploit=bool(args.exploit),
-        config=aegis_cfg, sink=sink, kb=kb, write=write)
+        config=aegis_cfg, sink=sink, kb=kb, write=write,
+        active_dast=bool(args.active_dast))
 
     if args.out:
         write_report(args.out, kb, sink, None, run_id=args.run_id or "agent",
@@ -745,6 +754,12 @@ def build_parser() -> argparse.ArgumentParser:
     agent_p.add_argument("--exploit", action="store_true",
                          help="also send stage-1 exploit-confirm probes at "
                               "auto-targetable leads (needs --scope)")
+    agent_p.add_argument("--active-dast", action="store_true",
+                         help="permit the dast phase to run ZAP's ACTIVE scanner "
+                              "(sends real attack payloads) WHEN a generative "
+                              "planner selects it for the goal; default is the "
+                              "passive baseline. Attack traffic — requires "
+                              "--authorized and --scope, like --exploit")
     agent_p.add_argument("--mode",
                          choices=["full-llm", "llm+decision", "static"],
                          default=None, help="operating mode (overrides --backend)")
