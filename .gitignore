@@ -13,3 +13,6 @@ htmlcov/
 
 # local LLM / LiteLLM credentials — never commit
 .aegis.env
+
+# Claude Code transient session state (agent worktrees, local scratch)
+.claude/worktrees/
