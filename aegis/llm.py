@@ -154,10 +154,18 @@ class OpenAICompatProvider:
             self.usage["input_tokens"] += int(usage.get("prompt_tokens", 0) or 0)
             self.usage["output_tokens"] += int(usage.get("completion_tokens", 0) or 0)
             self.usage["calls"] += 1
-            return data["choices"][0]["message"]["content"]
-        except (urllib.error.URLError, TimeoutError, ValueError, KeyError,
-                IndexError) as exc:
+            content = data["choices"][0]["message"]["content"]
+        except (urllib.error.URLError, OSError, TimeoutError, ValueError,
+                KeyError, IndexError) as exc:
+            # OSError covers socket.timeout (which is NOT a TimeoutError on
+            # Python 3.9, a CI target) and a dropped keep-alive
+            # (RemoteDisconnected / ConnectionReset) — all wrap to LLMError so
+            # callers (plan_next_action/plan_phases/plan_depth/…) degrade
+            # honestly instead of crashing on an uncaught exception.
             raise LLMError(f"llm request failed: {exc}") from exc
+        if not isinstance(content, str):  # a null/omitted message.content
+            raise LLMError("llm returned non-text content")
+        return content
 
     def complete(self, prompt: str) -> str:
         return self.chat([{"role": "user", "content": prompt}])
