@@ -141,6 +141,56 @@ def test_openai_provider_chat_error_wrapped(monkeypatch):
         p.complete("hi")
 
 
+def test_openai_provider_wraps_socket_timeout(monkeypatch):
+    """A read timeout surfaces as socket.timeout, which on Python 3.9 is NOT a
+    TimeoutError — it must still be wrapped as LLMError so planners degrade
+    honestly instead of crashing with an uncaught exception."""
+    import socket
+    import aegis.llm as llm_mod
+
+    def _boom(req, timeout=0):
+        raise socket.timeout("timed out")
+
+    monkeypatch.setattr(llm_mod.urllib.request, "urlopen", _boom)
+    p = OpenAICompatProvider(api_base="http://localhost:1/v1")
+    with pytest.raises(LLMError):
+        p.complete("hi")
+
+
+def test_openai_provider_wraps_dropped_connection(monkeypatch):
+    """A dropped keep-alive (ConnectionResetError / RemoteDisconnected) is an
+    OSError, not a URLError — it must also wrap to LLMError."""
+    import aegis.llm as llm_mod
+
+    def _boom(req, timeout=0):
+        raise ConnectionResetError("peer reset")
+
+    monkeypatch.setattr(llm_mod.urllib.request, "urlopen", _boom)
+    p = OpenAICompatProvider(api_base="http://localhost:1/v1")
+    with pytest.raises(LLMError):
+        p.complete("hi")
+
+
+def test_openai_provider_null_content_is_llmerror(monkeypatch):
+    """A JSON `message.content: null` must raise LLMError, never return None to
+    a caller that will then call .find()/json.loads() on it."""
+    import aegis.llm as llm_mod
+
+    class _Resp:
+        def read(self):
+            return json.dumps({"choices": [{"message": {"content": None}}]}).encode()
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(llm_mod.urllib.request, "urlopen",
+                        lambda req, timeout=0: _Resp())
+    p = OpenAICompatProvider(api_base="http://localhost:1/v1")
+    with pytest.raises(LLMError):
+        p.complete("hi")
+
+
 def test_summarize_falls_back_on_llm_error():
     class Boom:
         name = "boom"
