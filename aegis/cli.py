@@ -540,7 +540,8 @@ def _cmd_agent(args: argparse.Namespace) -> int:
     outcome = drive_agent(
         target=args.target, goal=args.goal, scope=scope,
         authorized=bool(args.authorized), exploit=bool(args.exploit),
-        config=aegis_cfg, sink=sink, kb=kb, write=write)
+        config=aegis_cfg, sink=sink, kb=kb, write=write,
+        max_tool_steps=getattr(args, "max_tool_steps", None))
 
     if args.out:
         write_report(args.out, kb, sink, None, run_id=args.run_id or "agent",
@@ -731,10 +732,11 @@ def build_parser() -> argparse.ArgumentParser:
         "agent", help="autonomous headless agent — drive an engagement from a "
                       "goal (chains scanners, stops before exploit)")
     agent_p.add_argument("goal", nargs="?", default="",
-                         help="high-level instruction, folded into the triage "
-                              "state; it steers routing only under an LLM "
-                              "planner (full-llm/llm+decision with AEGIS_LLM* "
-                              "set), not the fixed recon→web→dast phase order")
+                         help="high-level instruction; it steers the LLM's "
+                              "scanner selection whenever a local model is wired "
+                              "(AEGIS_LLM* set and --mode not static), and is "
+                              "folded into triage state. With no model, scanners "
+                              "run in the fixed recon→web→dast order.")
     agent_p.add_argument("--target", required=True,
                          help="host/URL to engage (authorized + in-scope)")
     agent_p.add_argument("--scope", type=Path, default=None,
@@ -753,6 +755,9 @@ def build_parser() -> argparse.ArgumentParser:
     agent_p.add_argument("--backend", choices=["static", "basal", "jev", "llm"],
                          default="static")
     agent_p.add_argument("--allow-egress", action="store_true")
+    agent_p.add_argument("--max-tool-steps", type=int, default=None,
+                         help="cap on scanner-selection steps (default: the "
+                              "number of allowlisted scanners)")
     agent_p.add_argument("--json", action="store_true",
                          help="print the final result as JSON on stdout "
                               "(transcript is routed to stderr)")

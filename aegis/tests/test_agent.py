@@ -246,3 +246,169 @@ def test_cli_exploit_without_authorized_refuses(capsys):
     rc = cli.main(["agent", "x", "--target", "good.htb", "--exploit"])
     assert rc == 2
     assert "requires --authorized" in capsys.readouterr().err
+
+
+# -- LLM-driven tool selection (milestone 24) --------------------------------
+import re as _re
+
+
+def _parse_opts(prompt):
+    opts = {}
+    for line in prompt.splitlines():
+        m = _re.match(r"\s*(\d+):\s*(\S+)", line)
+        if m:
+            opts[m.group(2)] = int(m.group(1))
+    return opts
+
+
+class _StubPlanner:
+    """Picks tools by NAME in a scripted order (robust to option reordering)."""
+
+    def __init__(self, order, name="stub"):
+        self.name = name
+        self._order = list(order)
+        self.prompts = []
+
+    def complete(self, prompt):
+        self.prompts.append(prompt)
+        opts = _parse_opts(prompt)
+        want = self._order.pop(0) if self._order else "stop"
+        key = "stop" if want == "stop" else f"run:{want}"
+        idx = opts.get(key, 0)
+        return json.dumps({"action_index": idx, "rationale": f"picking {want}"})
+
+    def chat(self, messages):
+        return ""
+
+
+def _drive_sel(planner, registry_tool=_SqliScanner, mode=None, phases=None,
+               max_tool_steps=None, transport=None):
+    cfg = AegisConfig.from_env(backend="static", local_only=True,
+                               **({"mode": mode} if mode else {}))
+    kb = KnowledgeBase()
+    kwargs = dict(target="http://good.htb/", goal="find sqli", scope=_scope(),
+                  authorized=True, exploit=False, config=cfg,
+                  sink=EventSink(path=None), kb=kb, write=[].append,
+                  registry=_Registry(registry_tool), transport=transport,
+                  planner=planner, max_tool_steps=max_tool_steps)
+    if phases is not None:
+        kwargs["phases"] = phases
+    return drive_agent(**kwargs), kb
+
+
+def test_stub_planner_drives_scanner_order():
+    """Selection is genuinely planner-driven: a stub scripting a reversed order
+    produces that exact scan order — a thing the fixed sequence cannot do."""
+    stub = _StubPlanner(["dast", "web", "recon"])
+    outcome, _ = _drive_sel(stub)
+    assert [p["phase"] for p in outcome.phases] == ["dast", "web", "recon"]
+    assert outcome.planner == "stub"
+    assert stub.prompts  # the planner was actually consulted
+
+
+def test_findings_conditioned_selection_differs():
+    """The planner's state carries finding COUNTS, so selection can branch on
+    what was found — a static permutation cannot."""
+    class _Cond:
+        name = "cond"
+
+        def __init__(self):
+            self.prompts = []
+
+        def complete(self, prompt):
+            self.prompts.append(prompt)
+            opts = _parse_opts(prompt)
+            if "step 1/" in prompt:
+                return json.dumps({"action_index": opts.get("run:recon", 0)})
+            want = "run:web" if "0 finding(s) confirmed" in prompt else "run:dast"
+            return json.dumps({"action_index": opts.get(want, 0), "rationale": "c"})
+
+        def chat(self, m):
+            return ""
+
+    found, _ = _drive_sel(_Cond(), registry_tool=_SqliScanner)      # recon confirms
+    none, _ = _drive_sel(_Cond(), registry_tool=_FalsePositiveScanner)  # recon finds nothing
+    assert found.phases[1]["phase"] == "dast"
+    assert none.phases[1]["phase"] == "web"
+
+
+def test_allowlist_cannot_be_escaped():
+    """A hostile planner (out-of-range index, a non-scanner name) and a caller
+    passing 'shell' in phases can never reach a non-allowlisted tool."""
+    seen = []
+
+    class _SpyRegistry:
+        def get(self, name):
+            seen.append(name)
+            if name not in ("recon", "web", "dast"):
+                raise AssertionError(f"off-allowlist tool reached registry: {name}")
+            return _SqliScanner(name)
+
+    class _Hostile:
+        name = "hostile"
+
+        def complete(self, prompt):
+            return json.dumps({"action_index": 999})  # out of range → honest fallback
+
+        def chat(self, m):
+            return ""
+
+    cfg = AegisConfig.from_env(backend="static", local_only=True)
+    outcome = drive_agent(
+        target="http://good.htb/", goal="x", scope=_scope(), authorized=True,
+        exploit=False, config=cfg, sink=EventSink(path=None), kb=KnowledgeBase(),
+        write=[].append, registry=_SpyRegistry(), planner=_Hostile(),
+        phases=("recon", "shell", "web"))  # 'shell' must be narrowed out
+    assert set(seen) <= {"recon", "web", "dast"}
+    assert "shell" not in seen
+    assert outcome.planner_fallbacks >= 1  # 999 fell back, never mapped to a tool
+
+
+class _FalsePositiveScanner(DockerBackedTool):
+    allows_network = True
+
+    def __init__(self, name):
+        self.name = name
+
+    def run(self, target, **kw):
+        return ToolResult(self.name, ToolStatus.OK, candidates=[make_candidate(
+            id=f"{self.name}-fp", title="benign info", cwe="CWE-200",
+            component="http://good.htb/x", severity="low",
+            source_engine="dynamic", tool=self.name,
+            hints={"true_positive_prob": 0.0})])
+
+
+def test_explicit_static_mode_never_consults_planner():
+    """--mode static stays fully offline even with a planner injected."""
+    stub = _StubPlanner(["dast", "web", "recon"])
+    outcome, _ = _drive_sel(stub, mode="static")
+    assert stub.prompts == []                 # planner never called
+    assert outcome.planner == "fixed"
+    assert [p["phase"] for p in outcome.phases] == ["recon", "web", "dast"]
+
+
+def test_degrade_honestly_on_dead_planner():
+    """A planner that errors degrades to fixed order and is reported as such —
+    never silently presented as model-driven."""
+    from aegis.llm import LLMError
+
+    class _Dead:
+        name = "dead"
+
+        def complete(self, prompt):
+            raise LLMError("connection refused")
+
+        def chat(self, m):
+            return ""
+
+    outcome, _ = _drive_sel(_Dead())
+    assert [p["phase"] for p in outcome.phases] == ["recon", "web", "dast"]
+    assert outcome.planner_fallbacks == 3
+    assert all(s["selected_by"] == "fallback" for s in outcome.tool_selection
+               if s["tool"] != "stop")
+
+
+def test_max_tool_steps_bounds_the_loop():
+    stub = _StubPlanner(["recon", "web", "dast"])
+    outcome, _ = _drive_sel(stub, max_tool_steps=1)
+    assert len([p for p in outcome.phases if p["status"] == "ok"]) == 1

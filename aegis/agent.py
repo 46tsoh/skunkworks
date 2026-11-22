@@ -1,8 +1,10 @@
 """``aegis agent`` — the autonomous, headless, Strix-style driver.
 
-Give it a goal and a target; it drives the whole engagement itself: it chains
-the live network scanners (recon → web → dast), triages every finding through
-the dynamic agent loop into one knowledge base, and then **stops at the
+Give it a goal and a target; it drives the whole engagement itself. When a local
+model is wired, the **LLM selects which scanner to run next** from a hard
+allowlist (recon/web/dast), per finding — the Strix trait; with no model it falls
+back to a fixed recon → web → dast order. Either way it triages every finding
+through the dynamic loop into one knowledge base, then **stops at the
 confirm-to-exploit gate**. Only with explicit go-ahead (``--exploit`` headless,
 or a typed ``go`` in the shell) does it send stage-1 exploit-confirmation probes
 at the leads it can auto-target.
@@ -36,9 +38,19 @@ from aegis.shell import (
     _finding_key, _load_sample_pool, authorize, fold_findings, run_narration,
 )
 
-#: The scanner phases the agent chains, in order. Each is an explicit, gated
-#: Docker scanner run — never the ungated in-loop registry path.
+#: The scanner phases the agent chains, in canonical order (used verbatim in
+#: fixed/offline mode). Each is an explicit, gated Docker scanner run — never the
+#: ungated in-loop registry path.
 DEFAULT_PHASES = ("recon", "web", "dast")
+
+#: The HARD allowlist: the only tools the autonomous selector may ever choose.
+#: It lives in code (never config/env/scope/finding text), and every per-turn
+#: option list is built from it — the planner/router only ever see these names,
+#: so a hostile model or finding can never reach a code-execution adapter
+#: (shell/sandbox/poc/frida/…). See docs/specs/autonomous-agent.md § Tool
+#: selection.
+ALLOWLIST = frozenset(DEFAULT_PHASES)
+assert set(DEFAULT_PHASES) == ALLOWLIST  # the two must never drift
 
 
 # --------------------------------------------------------------------------- #
@@ -105,6 +117,9 @@ class AgentOutcome:
     decisions: int = 0
     cache_hits: int = 0
     all_refused: bool = False
+    tool_selection: List[dict] = field(default_factory=list)  # {tool,selected_by,rationale[,skipped]}
+    planner: str = "fixed"            # the selection planner name, or "fixed"
+    planner_fallbacks: int = 0        # steps where the planner was unreachable
 
     def as_dict(self) -> dict:
         return {
@@ -114,12 +129,36 @@ class AgentOutcome:
             "exploit_ran": self.exploit_ran,
             "verified": sum(1 for a in self.attempted if a.get("verified")),
             "degraded": self.degraded, "all_refused": self.all_refused,
+            "tool_selection": self.tool_selection, "planner": self.planner,
+            "planner_fallbacks": self.planner_fallbacks,
         }
 
 
 # --------------------------------------------------------------------------- #
 # The driver
 # --------------------------------------------------------------------------- #
+def _select_state(goal, allow, remaining, outcome, kb, steps, budget) -> str:
+    """The planner's state string: COUNTS + tool-name enums + the goal only.
+
+    Deliberately carries no raw finding titles/components and no authorize()
+    reason text, so a hostile scan finding cannot steer the agent toward a new
+    target or tool (the planner only ever chooses among allowlisted options).
+    """
+    ran = [t for t in allow if t not in remaining]
+    return (
+        "You are the coordinator driving a defensive security test of an "
+        "AUTHORIZED target. Choose the next scanner to run, or stop. Run recon "
+        "(host/port/service discovery) first when little is known; run web "
+        "(fast template checks) and dast (active scan) once a web surface "
+        "exists; stop only when further scanning will not help. "
+        f"Goal: {sanitize_text(goal, 160) or '(general assessment)'}. "
+        f"Ran: {', '.join(ran) or 'nothing yet'}. "
+        f"Still available: {', '.join(remaining) or 'none'}. "
+        f"{outcome.n_candidates} candidate(s) surfaced; "
+        f"{len(kb.accepted)} finding(s) confirmed; step {steps}/{budget}."
+    )
+
+
 def drive_agent(
     *,
     target: str,
@@ -135,8 +174,15 @@ def drive_agent(
     transport=None,
     phases=DEFAULT_PHASES,
     confirm: Optional[Callable[[], str]] = None,
+    planner=None,
+    max_tool_steps: Optional[int] = None,
 ) -> AgentOutcome:
     """Run the autonomous engagement to completion (minus the gated exploit).
+
+    The scanners are chosen by an LLM planner when one is wired (per finding,
+    from the hard :data:`ALLOWLIST`); otherwise a fixed recon→web→dast order.
+    ``planner`` is a test/injection seam (an ``LLMProvider``); ``None`` means
+    self-build from ``config``. ``max_tool_steps`` caps selection steps.
 
     ``confirm`` (interactive only) is called at the confirm-to-exploit gate; it
     returns the operator's typed line (``go`` proceeds). Headless callers pass
@@ -145,14 +191,30 @@ def drive_agent(
     seen_keys: set = set()
     outcome = AgentOutcome(live=authorized)
 
-    # Honest disclosure: under an LLM mode with nothing configured, build_llm
-    # returns the deterministic TemplateLLM stub — the transcript looks agentic
-    # but is not model-driven. Say so once, where the operator sees it.
-    if config.uses_planner:
-        from aegis.llm import TemplateLLM, build_llm
-        if isinstance(build_llm(local_only=config.local_only), TemplateLLM):
-            write("  planner: TemplateLLM stub (no AEGIS_LLM* configured) — "
-                  "reasoning is templated, not model-driven.")
+    # Build the SELECTION planner once. A real local model drives tool choice at
+    # the default (mode unset); an explicit `--mode static` stays fully offline
+    # even with AEGIS_LLM set; and an unconfigured/dead model degrades honestly
+    # to the fixed order (never masquerades as model-driven).
+    from aegis.llm import TemplateLLM, build_llm, plan_tool_selection
+    from aegis.llm import LLMError as _LLMError
+    prov = planner
+    if prov is None:
+        try:
+            prov = build_llm(local_only=config.local_only)
+        except _LLMError as exc:
+            prov = None
+            write(f"  planner unavailable ({sanitize_text(str(exc), 120)}); "
+                  f"fixed scanner order.")
+    sel_planner = prov if (prov is not None
+                           and not isinstance(prov, TemplateLLM)
+                           and config.mode != "static") else None
+    outcome.planner = getattr(sel_planner, "name", None) or "fixed"
+    if sel_planner is None:
+        write("  tool selection: fixed scanner order (recon→web→dast) — wire a "
+              "local model (AEGIS_LLM*) with --mode unset to let it choose.")
+    else:
+        write(f"  tool selection: LLM planner {outcome.planner} "
+              f"(proposes; the decision backend commits).")
 
     def _narrate_into(kb_, pool_):
         cmd_kb, router = run_narration(pool_, config, sink, goal)
@@ -161,35 +223,94 @@ def drive_agent(
         outcome.decisions += getattr(m, "calls", 0)
         outcome.cache_hits += getattr(m, "cache_hits", 0)
 
-    # 1. SCAN — chain the live scanners, each gated, each triaged into the KB.
-    if authorized:
-        for phase in phases:
-            ptarget = phase_target(phase, target)
-            ok, reason = authorize(scope, authorized, ptarget)
-            if not ok:
-                sink.emit("a0001", "scope_refused",
-                          target=sanitize_text(ptarget, 160), reason=reason)
-                write(f"  [{phase}] REFUSED — {reason}")
-                outcome.phases.append({"phase": phase, "target": ptarget,
-                                       "status": "refused", "candidates": 0})
-                continue
-            if Path(ptarget).exists():  # same local-path refusal as `scan`
-                write(f"  [{phase}] refusing: {ptarget!r} is a local path")
-                outcome.phases.append({"phase": phase, "target": ptarget,
-                                       "status": "refused_local", "candidates": 0})
-                continue
-            cands = _run_scanner(phase, ptarget, registry, write)
-            if cands is None:
-                outcome.degraded = True
-                outcome.phases.append({"phase": phase, "target": ptarget,
-                                       "status": "error", "candidates": 0})
-                continue
-            outcome.n_candidates += len(cands)
-            write(f"  [{phase}] {ptarget} → {len(cands)} candidate(s); triaging…")
-            if cands:
-                _narrate_into(kb, cands)
+    def _run_phase(phase):
+        """The existing per-phase gate+run body, byte-for-byte. Returns the
+        status recorded in outcome.phases ('ok'/'refused'/'refused_local'/'error')."""
+        ptarget = phase_target(phase, target)
+        ok, reason = authorize(scope, authorized, ptarget)  # exact bytes, before traffic
+        if not ok:
+            sink.emit("a0001", "scope_refused",
+                      target=sanitize_text(ptarget, 160), reason=reason)
+            write(f"  [{phase}] REFUSED — {reason}")
             outcome.phases.append({"phase": phase, "target": ptarget,
-                                   "status": "ok", "candidates": len(cands)})
+                                   "status": "refused", "candidates": 0})
+            return "refused"
+        if Path(ptarget).exists():  # same local-path refusal as `scan`
+            write(f"  [{phase}] refusing: {ptarget!r} is a local path")
+            outcome.phases.append({"phase": phase, "target": ptarget,
+                                   "status": "refused_local", "candidates": 0})
+            return "refused_local"
+        cands = _run_scanner(phase, ptarget, registry, write)
+        if cands is None:
+            outcome.degraded = True
+            outcome.phases.append({"phase": phase, "target": ptarget,
+                                   "status": "error", "candidates": 0})
+            return "error"
+        outcome.n_candidates += len(cands)
+        write(f"  [{phase}] {ptarget} → {len(cands)} candidate(s); triaging…")
+        if cands:
+            _narrate_into(kb, cands)
+        outcome.phases.append({"phase": phase, "target": ptarget,
+                               "status": "ok", "candidates": len(cands)})
+        return "ok"
+
+    # 1. SELECT + SCAN — the LLM (or fixed order) chooses the next allowlisted
+    #    scanner each step; every pick is gated on the exact bytes then run.
+    if authorized:
+        from aegis.analysis.backends import build_router
+        # Narrow-only: intersect the caller's phases with the frozen allowlist,
+        # deduped, order preserved. phases=("shell",) → empty → nothing runs.
+        allow = tuple(dict.fromkeys(t for t in phases if t in ALLOWLIST))
+        sel_router = build_router([], config=config)
+        remaining = list(allow)
+        ran_ok = 0
+        budget = max_tool_steps if max_tool_steps is not None else len(allow)
+        steps = 0
+        while remaining and steps < budget:
+            steps += 1
+            # Options are CONSTRUCTED from the allowlist, never discovered; the
+            # registry enumerator is never consulted, so no off-list name exists.
+            options = [f"run:{t}" for t in remaining]
+            if ran_ok >= 1:
+                options = options + ["stop"]  # stop only after a successful run
+            state = _select_state(goal, allow, remaining, outcome, kb, steps, budget)
+            label, rationale = "fixed", ""
+            if sel_planner is not None and len(options) > 1:
+                idx, rationale = plan_tool_selection(sel_planner, state, options)
+                if idx is None:
+                    outcome.planner_fallbacks += 1
+                    label = "fallback"       # no reorder: option 0 = canonical next
+                else:
+                    label = "planner"
+                    options = [options[idx]] + options[:idx] + options[idx + 1:]
+            choice = sel_router.choose("agent.select_next_tool", state, options)
+            action = choice.option
+            if label in ("planner", "fallback") and action != options[0]:
+                label = "router"            # the COMMIT overrode the proposal
+            rationale = sanitize_text(rationale, 200)
+            sink.emit("a0001", "decision", kind="select_next_tool",
+                      outcome=action, probability=round(choice.probability, 3),
+                      backend=choice.backend)
+            if rationale:
+                write(f"  plan → {action} ({rationale})")
+            if action == "stop" or not action.startswith("run:"):
+                outcome.tool_selection.append(
+                    {"tool": "stop", "selected_by": label,
+                     "rationale": rationale, "skipped": list(remaining)})
+                break
+            phase = action.split(":", 1)[1]
+            if phase not in ALLOWLIST:       # defense in depth (unreachable)
+                break
+            remaining.remove(phase)          # consume BEFORE gate/run (no cache replay)
+            outcome.tool_selection.append(
+                {"tool": phase, "selected_by": label, "rationale": rationale})
+            if _run_phase(phase) == "ok":
+                ran_ok += 1
+        outcome.decisions += getattr(getattr(sel_router, "metrics", None), "calls", 0)
+        outcome.cache_hits += getattr(getattr(sel_router, "metrics", None), "cache_hits", 0)
+        if outcome.planner_fallbacks:
+            write(f"  planner unreachable on {outcome.planner_fallbacks} step(s); "
+                  f"those fell back to fixed scanner order.")
         outcome.all_refused = bool(outcome.phases) and all(
             p["status"] in ("refused", "refused_local") for p in outcome.phases)
     else:
@@ -263,6 +384,9 @@ def drive_agent(
 
 def _run_scanner(phase: str, target: str, registry, write):
     """Run one live Docker scanner; return its candidates, or None on failure."""
+    if phase not in ALLOWLIST:  # -O-safe co-located barrier (never an assert)
+        write(f"  [{phase}] refused: not an allowlisted scanner")
+        return None
     try:
         from aegis.tools import default_registry
         from aegis.tools.base import DockerBackedTool

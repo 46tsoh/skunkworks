@@ -304,8 +304,50 @@ def explain_finding(provider: LLMProvider, title: str, evidence: Sequence[str]) 
         return ""
 
 
+def plan_tool_selection(
+    provider: LLMProvider, state: str, options: Sequence[str]
+) -> "tuple[Optional[int], str]":
+    """The autonomous agent's 'which scanner next' proposal — STRICT.
+
+    Unlike :func:`plan_next_action` (which clamps and falls back to option 0 so a
+    dynamic run never breaks), this returns ``(index, rationale)`` ONLY on a
+    clean, in-range choice, and ``(None, "")`` on any failure: network error,
+    non-JSON, a missing ``action_index`` key, a non-integer, or an out-of-range
+    index. It never clamps a bad index onto a real option — an unreachable or
+    stubbed model must degrade to the caller's honest fixed fallback, never
+    masquerade as a deliberate choice. (So the TemplateLLM stub, which answers
+    with ``{"probability": …}`` and no ``action_index``, yields ``(None, "")``.)
+    """
+    opts = list(options)
+    if not opts:
+        return (None, "")
+    numbered = "\n".join(f"{i}: {o}" for i, o in enumerate(opts))
+    prompt = (
+        "You are the coordinator agent driving a defensive security test of an "
+        "AUTHORIZED target. Choose the single next scanner to run, or stop.\n\n"
+        f"Current state: {state}\n\nActions:\n{numbered}\n\n"
+        'Reply ONLY as JSON: {"action_index": <int>, '
+        '"rationale": "<one short sentence>"}'
+    )
+    try:
+        text = provider.complete(prompt)
+    except LLMError:
+        return (None, "")
+    lo, hi = text.find("{"), text.rfind("}")
+    if lo == -1 or hi == -1:
+        return (None, "")
+    try:
+        data = json.loads(text[lo:hi + 1])
+        idx = int(data["action_index"])          # missing key / non-int → fallback
+    except (ValueError, KeyError, TypeError):
+        return (None, "")
+    if idx < 0 or idx >= len(opts):               # out of range → fallback, NO clamp
+        return (None, "")
+    return (idx, str(data.get("rationale", "")).strip()[:200])
+
+
 __all__ = [
     "LLMProvider", "LLMError", "TemplateLLM", "OpenAICompatProvider",
     "build_llm", "judge_backend", "summarize", "plan_next_action",
-    "agent_turn", "explain_finding", "is_local_base",
+    "plan_tool_selection", "agent_turn", "explain_finding", "is_local_base",
 ]
