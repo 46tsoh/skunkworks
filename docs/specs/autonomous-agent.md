@@ -26,9 +26,51 @@ explicit go-ahead:
 This is the chosen safety default: unattended autonomy up to the point of
 sending attack traffic, a human beat before payloads.
 
+## Tool selection (milestone 24)
+
+The scanner order is no longer fixed. When a local model is wired, the **LLM
+selects the next scanner each step** from the hard allowlist, conditioned on what
+has been found so far — the Strix trait. The decision is a `plan → commit` split
+exactly like the dynamic engine: `plan_tool_selection` has the model **propose**
+an option; `DecisionRouter.choose` **commits** it (logged, cached, thresholded).
+
+**The allowlist is structural, in three independent layers** — no single mistake
+or hostile model/finding can reach a code-execution adapter:
+
+1. **Names never cross the boundary.** `ALLOWLIST = frozenset({recon, web, dast})`
+   is a module constant. Each step's options are *constructed* from
+   `ALLOWLIST ∩ caller-phases` (`[f"run:{t}"] + ["stop"]`). The loop **never**
+   calls `registry.available(ToolKind.DYNAMIC)` or builds a `RegistryProbe`, so
+   `shell`/`sandbox`/`poc`/`frida`/`proxy`/`browser` names are not in the universe
+   the planner or router ever sees. The planner returns an **index**, not a name.
+2. **Out-of-range is a fallback, not a clamp.** `plan_tool_selection` returns
+   `None` on a bad/hostile/out-of-range/non-JSON reply (the fixed-order option 0
+   is used, tagged `fallback`); it never clamps a wild index onto a real option.
+3. **The runner re-checks.** `_run_scanner` rejects any `phase ∉ ALLOWLIST`
+   (−O-safe, not an `assert`) and still requires `isinstance(DockerBackedTool)` +
+   `allows_network` — which only recon/web/dast set.
+
+`phases` is **narrow-only**: `("shell",)` → empty allow → nothing runs. The
+planner's **state carries only counts + tool names + the goal** — never raw
+finding text or the authorize reason — so a hostile scan finding cannot steer the
+agent to a new target or tool. Scope and the `authorized` flag never enter the
+planner. Every selected scanner is still `authorize()`-gated on the exact
+per-phase bytes before any traffic (unchanged), and a picked tool is removed from
+the remaining set **before** the gate/run so a refusal can't be replayed; the
+loop is bounded by `--max-tool-steps` (default: the allowlist size).
+
+**Honest degradation (gap #2).** `drive_agent` self-builds the selection planner
+from config: a real provider **and** `mode != static`. So a wired local model
+drives selection at the **default** (`--mode` unset, loopback under
+`local_only`); `--mode static` stays fully offline; and an unconfigured or dead
+model degrades to the fixed `recon → web → dast` order and **says so**
+(`planner: fixed …` / `planner unreachable on N step(s)`), never presenting a
+scripted run as model-driven. Fixed-mode selection is byte-for-byte the old order.
+
 ## Flow (`drive_agent`)
 
-1. **Scan** — for each phase in `recon, web, dast`:
+1. **Scan** — the LLM (or fixed order) selects each scanner from the allowlist;
+   for the chosen phase:
    - derive the per-phase target form (`phase_target`): a **bare host** for
      `recon` (nmap), a **URL** for `web`/`dast` (nuclei/ZAP);
    - `authorize(scope, authorized, phase_target)` on the **exact bytes the tool
@@ -102,9 +144,15 @@ Claude-like shell.
   deterministic option and the plan is scripted — the transcript *looks* agentic
   but is not model-driven. Point `AEGIS_LLM*` at a local model (loopback under
   `local_only`) for genuine planning/rationale.
-- **The phase chain is a fixed sequence** (`recon → web → dast`) in this
-  milestone; the goal is folded into the triage state but does not yet re-order
-  or prune phases. LLM-planned phase selection is a follow-up.
+- **Tool selection is LLM-driven only with a wired model.** With no
+  `AEGIS_LLM*` (or `--mode static`), the order is the fixed `recon → web → dast`
+  and the goal only tilts triage — disclosed at runtime. The *set* of tools is
+  the three network scanners; the agent does not select deeper tools (deliberate
+  — see gap #3 below).
+- **Exploitation stays stage-1 confirm only** (gap #3), deliberately bounded for
+  a defensive, local-only tool: the agent never writes/runs arbitrary PoC code,
+  and the selector cannot choose code-execution tools. This is a design choice,
+  not a missing feature.
 - **`scan` container egress gates only the seed** (inherited from `aegis scan`):
   a scanner that spiders paths/ports or follows redirects is not re-checked per
   request. Scope `agent`/`scan` engagements at host granularity. `attempt`
@@ -115,7 +163,11 @@ Claude-like shell.
 
 ## Deferred (named follow-ups)
 
-- LLM-planned, goal-adaptive phase selection and tool choice.
+- **Widening the selectable tool set beyond the three network scanners** —
+  deliberately *not* done: letting the agent pick code-execution adapters
+  (shell/sandbox/poc) is exactly the ungated hazard this milestone designed
+  against. Any such change must keep the allowlist/gate invariants and the
+  `allowlist-cannot-escape` test as the tripwire.
 - `start()/step()/finalize()` engine refactor for within-turn pause/resume
   (shared with the shell's deferred item).
 - Per-request scope-enforcing egress proxy for scanner containers.

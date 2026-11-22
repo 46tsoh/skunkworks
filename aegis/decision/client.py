@@ -392,9 +392,16 @@ class LLMJudgeBackend:
             f"{prompt}\n\nOptions:\n{numbered}\n\n"
             'Reply ONLY as JSON: {"index": <int>, "probability": <0..1>}'
         )
-        idx = max(0, min(int(data.get("index", 0)), len(opts) - 1))
-        return ChoiceResult(idx, opts[idx], float(data.get("probability", 0.0)),
-                            self.name, ms, data)
+        try:
+            idx = int(data.get("index", 0))
+        except (ValueError, TypeError, OverflowError):
+            idx = 0
+        idx = max(0, min(idx, len(opts) - 1))  # committer clamps to a valid option
+        try:
+            prob = float(data.get("probability", 0.0))
+        except (ValueError, TypeError):
+            prob = 0.0
+        return ChoiceResult(idx, opts[idx], prob, self.name, ms, data)
 
     def score(
         self, prompt: str, scale_min: float, scale_max: float

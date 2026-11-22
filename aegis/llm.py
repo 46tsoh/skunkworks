@@ -154,10 +154,16 @@ class OpenAICompatProvider:
             self.usage["input_tokens"] += int(usage.get("prompt_tokens", 0) or 0)
             self.usage["output_tokens"] += int(usage.get("completion_tokens", 0) or 0)
             self.usage["calls"] += 1
-            return data["choices"][0]["message"]["content"]
-        except (urllib.error.URLError, TimeoutError, ValueError, KeyError,
-                IndexError) as exc:
+            content = data["choices"][0]["message"]["content"]
+        except (urllib.error.URLError, OSError, TimeoutError, ValueError,
+                KeyError, IndexError) as exc:
+            # OSError covers socket.timeout (NOT a TimeoutError on py3.9) and a
+            # dropped keep-alive (RemoteDisconnected/ConnectionReset) — all wrap
+            # to LLMError so callers degrade honestly rather than crash.
             raise LLMError(f"llm request failed: {exc}") from exc
+        if not isinstance(content, str):  # a null/omitted message.content
+            raise LLMError("llm returned non-text content")
+        return content
 
     def complete(self, prompt: str) -> str:
         return self.chat([{"role": "user", "content": prompt}])
@@ -331,19 +337,27 @@ def plan_tool_selection(
     )
     try:
         text = provider.complete(prompt)
-    except LLMError:
+    except Exception:          # ANY provider failure → honest fixed fallback
+        return (None, "")
+    if not isinstance(text, str):
         return (None, "")
     lo, hi = text.find("{"), text.rfind("}")
     if lo == -1 or hi == -1:
         return (None, "")
     try:
         data = json.loads(text[lo:hi + 1])
-        idx = int(data["action_index"])          # missing key / non-int → fallback
-    except (ValueError, KeyError, TypeError):
+    except (ValueError, TypeError):
         return (None, "")
-    if idx < 0 or idx >= len(opts):               # out of range → fallback, NO clamp
+    if not isinstance(data, dict):
         return (None, "")
-    return (idx, str(data.get("rationale", "")).strip()[:200])
+    ai = data.get("action_index")
+    # Require a TRUE JSON integer: reject bool (subclasses int), float (incl.
+    # 1e999 → inf), str, None — never coerce/clamp a non-int into a real choice.
+    if not isinstance(ai, int) or isinstance(ai, bool):
+        return (None, "")
+    if ai < 0 or ai >= len(opts):                 # out of range → fallback, NO clamp
+        return (None, "")
+    return (ai, str(data.get("rationale", "")).strip()[:200])
 
 
 __all__ = [

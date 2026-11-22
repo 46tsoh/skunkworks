@@ -211,6 +211,12 @@ line on **stdout** (the transcript goes to **stderr**), so CI can parse it;
 `--authorized` the agent runs **offline narration only** and never scans or
 exploits.
 
+When a local model is wired (`AEGIS_LLM*` set, `--mode` left unset), the agent
+**chooses which scanner to run next itself**, per finding, from a hard allowlist
+(recon/web/dast) — the LLM proposes, the decision layer commits, and every pick
+is still scope-gated. With no model it falls back to a fixed `recon → web → dast`
+order and says so. `--max-tool-steps` bounds the selection loop.
+
 The same driver is available interactively — `aegis shell` has an
 `agent <target> [goal]` verb that streams its work and pauses for a typed `go`
 before any exploit. See [`docs/specs/autonomous-agent.md`](docs/specs/autonomous-agent.md).

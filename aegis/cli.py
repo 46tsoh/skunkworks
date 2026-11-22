@@ -496,6 +496,9 @@ def _cmd_agent(args: argparse.Namespace) -> int:
     from aegis.redteam.scope import ScopeError
     from aegis.shell import _make_renderer
 
+    if getattr(args, "max_tool_steps", None) is not None and args.max_tool_steps < 1:
+        print("--max-tool-steps must be >= 1.", file=sys.stderr)
+        return 2
     if args.exploit and not args.authorized:
         print("refusing: --exploit requires --authorized (you must assert you "
               "are permitted to send exploit probes).", file=sys.stderr)

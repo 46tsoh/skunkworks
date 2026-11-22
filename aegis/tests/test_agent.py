@@ -412,3 +412,95 @@ def test_max_tool_steps_bounds_the_loop():
     stub = _StubPlanner(["recon", "web", "dast"])
     outcome, _ = _drive_sel(stub, max_tool_steps=1)
     assert len([p for p in outcome.phases if p["status"] == "ok"]) == 1
+
+
+def test_cli_max_tool_steps_must_be_positive(capsys):
+    rc = cli.main(["agent", "x", "--target", "good.htb", "--authorized",
+                   "--max-tool-steps", "0"])
+    assert rc == 2
+    assert "max-tool-steps" in capsys.readouterr().err
+
+
+class _BadReplyPlanner:
+    """Returns a malformed selection reply; must degrade to honest fallback."""
+
+    name = "bad"
+
+    def __init__(self, reply):
+        self._reply = reply
+        self.prompts = []
+
+    def complete(self, prompt):
+        self.prompts.append(prompt)
+        return self._reply
+
+    def chat(self, m):
+        return ""
+
+
+@pytest.mark.parametrize("reply", [
+    None,                                   # null content (would AttributeError)
+    '{"action_index": 1e999}',              # non-finite (would OverflowError)
+    '{"action_index": 1.7}',                # float → not a true int
+    '{"action_index": true}',               # bool → excluded
+    '{"action_index": "1"}',                # string → not an int
+    '{"action_index": 99}',                 # out of range → no clamp
+    "not json at all",                      # no JSON object
+    '{"rationale": "no index key"}',        # missing key
+])
+def test_malformed_planner_reply_degrades_to_fixed(reply):
+    """plan_tool_selection honors its 'any failure → fallback' contract: every
+    malformed reply falls back to the fixed order, never crashes or masquerades."""
+    outcome, _ = _drive_sel(_BadReplyPlanner(reply))
+    assert [p["phase"] for p in outcome.phases] == ["recon", "web", "dast"]
+    assert outcome.planner_fallbacks >= 1
+    assert all(s["selected_by"] == "fallback" for s in outcome.tool_selection
+               if s["tool"] != "stop")
+
+
+def test_provider_wraps_socket_timeout_as_llmerror():
+    """A read timeout / dropped connection from the model endpoint must surface
+    as LLMError (not a bare socket.timeout, which py3.9 would not catch)."""
+    import socket
+
+    from aegis.llm import LLMError, OpenAICompatProvider, plan_tool_selection
+
+    prov = OpenAICompatProvider(model="m", api_base="http://localhost:9/v1",
+                                local_only=True)
+
+    def _boom(*a, **k):
+        raise socket.timeout("timed out")
+
+    import aegis.llm as _llm
+    orig = _llm.urllib.request.urlopen
+    _llm.urllib.request.urlopen = _boom
+    try:
+        with pytest.raises(LLMError):
+            prov.complete("hi")
+        # and the strict selector swallows it into an honest fallback
+        assert plan_tool_selection(prov, "s", ["run:recon", "stop"]) == (None, "")
+    finally:
+        _llm.urllib.request.urlopen = orig
+
+
+def test_fixed_order_not_reordered_by_live_backend():
+    """With no planner, the fixed order must be recon→web→dast even if a live
+    decision backend would reorder — 'fixed' must mean fixed."""
+    import aegis.analysis.backends as _backends
+
+    class _ReverseRouter:
+        class metrics:
+            calls = 0
+            cache_hits = 0
+
+        def choose(self, kind, state, options):
+            from aegis.decision.client import ChoiceResult
+            return ChoiceResult(len(options) - 1, options[-1], 1.0, "evil", 0.0, {})
+
+    orig = _backends.build_router
+    _backends.build_router = lambda *a, **k: _ReverseRouter()
+    try:
+        outcome, _ = _drive_sel(planner=None)
+    finally:
+        _backends.build_router = orig
+    assert [p["phase"] for p in outcome.phases] == ["recon", "web", "dast"]

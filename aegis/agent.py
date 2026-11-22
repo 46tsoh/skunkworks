@@ -2,7 +2,8 @@
 
 Give it a goal and a target; it drives the whole engagement itself. When a local
 model is wired, the **LLM selects which scanner to run next** from a hard
-allowlist (recon/web/dast), per finding — the Strix trait; with no model it falls
+allowlist (recon/web/dast), per step, conditioned on what it has found — the
+Strix trait; with no model it falls
 back to a fixed recon → web → dast order. Either way it triages every finding
 through the dynamic loop into one knowledge base, then **stops at the
 confirm-to-exploit gate**. Only with explicit go-ahead (``--exploit`` headless,
@@ -49,8 +50,8 @@ DEFAULT_PHASES = ("recon", "web", "dast")
 #: so a hostile model or finding can never reach a code-execution adapter
 #: (shell/sandbox/poc/frida/…). See docs/specs/autonomous-agent.md § Tool
 #: selection.
-ALLOWLIST = frozenset(DEFAULT_PHASES)
-assert set(DEFAULT_PHASES) == ALLOWLIST  # the two must never drift
+ALLOWLIST = frozenset({"recon", "web", "dast"})
+assert set(DEFAULT_PHASES) == ALLOWLIST  # a real divergence fails at import
 
 
 # --------------------------------------------------------------------------- #
@@ -276,6 +277,8 @@ def drive_agent(
             state = _select_state(goal, allow, remaining, outcome, kb, steps, budget)
             label, rationale = "fixed", ""
             if sel_planner is not None and len(options) > 1:
+                # A real planner proposes; the DecisionRouter commits (and may
+                # legitimately override). Only this path touches the router.
                 idx, rationale = plan_tool_selection(sel_planner, state, options)
                 if idx is None:
                     outcome.planner_fallbacks += 1
@@ -283,14 +286,21 @@ def drive_agent(
                 else:
                     label = "planner"
                     options = [options[idx]] + options[:idx] + options[idx + 1:]
-            choice = sel_router.choose("agent.select_next_tool", state, options)
-            action = choice.option
-            if label in ("planner", "fallback") and action != options[0]:
-                label = "router"            # the COMMIT overrode the proposal
+                choice = sel_router.choose("agent.select_next_tool", state, options)
+                action, backend, prob = (choice.option, choice.backend,
+                                         choice.probability)
+                if action != options[0]:
+                    label = "router"         # the COMMIT overrode the proposal
+            else:
+                # No planner (or a single forced option): deterministic canonical
+                # next — NEVER routed through a live decider, so "fixed" is truly
+                # the recon→web→dast order regardless of --backend.
+                action, backend, prob = options[0], "fixed", 1.0
+                if sel_planner is not None:
+                    label = "forced"         # planner active, only one option
             rationale = sanitize_text(rationale, 200)
             sink.emit("a0001", "decision", kind="select_next_tool",
-                      outcome=action, probability=round(choice.probability, 3),
-                      backend=choice.backend)
+                      outcome=action, probability=round(prob, 3), backend=backend)
             if rationale:
                 write(f"  plan → {action} ({rationale})")
             if action == "stop" or not action.startswith("run:"):
